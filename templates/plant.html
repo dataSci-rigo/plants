@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block content %}
+
+<a href="/" class="text-green-700 hover:underline text-sm font-medium">← All plants</a>
+
+<!-- Header card -->
+<div class="mt-4 bg-white rounded-2xl shadow p-6">
+  <div class="flex flex-col md:flex-row gap-6">
+
+    <!-- Photo -->
+    <div class="flex-shrink-0">
+      {% if plant.image_data %}
+        <img src="/plant/{{ plant.id }}/photo"
+             alt="{{ plant.name }}"
+             class="w-full md:w-64 h-64 object-cover rounded-xl shadow-sm" />
+      {% else %}
+        <div class="w-full md:w-64 h-64 bg-green-100 rounded-xl flex items-center justify-center text-8xl select-none">
+          🌱
+        </div>
+      {% endif %}
+    </div>
+
+    <!-- Info -->
+    <div class="flex-1">
+      <h1 class="text-3xl font-bold text-green-800">{{ plant.name }}</h1>
+      <p class="text-gray-500 mt-0.5">{{ plant.plant_type or "Unknown type" }}</p>
+
+      <div class="mt-5 grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div class="bg-green-50 rounded-xl p-3">
+          <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Pot depth</p>
+          <p class="text-lg font-bold text-green-800">{{ plant.pot_depth_cm or "?" }} cm</p>
+        </div>
+        <div class="bg-green-50 rounded-xl p-3">
+          <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Frequency</p>
+          <p class="text-lg font-bold text-green-800">Every {{ plant.watering_frequency_days }}d</p>
+        </div>
+        <div class="bg-green-50 rounded-xl p-3">
+          <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Per session</p>
+          <p class="text-lg font-bold text-green-800">{{ plant.watering_amount_ml }} ml</p>
+        </div>
+        <div class="bg-green-50 rounded-xl p-3">
+          <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Total sessions</p>
+          <p class="text-lg font-bold text-green-800">{{ history | length }}</p>
+        </div>
+      </div>
+
+      {% if plant.notes %}
+      <p class="mt-4 text-gray-500 italic text-sm">{{ plant.notes }}</p>
+      {% endif %}
+
+      <p class="mt-4 text-xs text-gray-400">Added {{ plant.created_at[:10] }}</p>
+    </div>
+
+  </div>
+</div>
+
+<!-- Watering history -->
+<div class="mt-6 bg-white rounded-2xl shadow p-6">
+  <h2 class="text-xl font-bold text-green-800 mb-4">Watering History</h2>
+
+  {% if history %}
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="text-left text-gray-400 border-b border-gray-100">
+          <th class="pb-3 font-medium">#</th>
+          <th class="pb-3 font-medium">Date &amp; Time</th>
+          <th class="pb-3 font-medium">Amount</th>
+          <th class="pb-3 font-medium">Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for h in history %}
+      <tr class="border-b border-gray-50 hover:bg-green-50 transition-colors">
+        <td class="py-2.5 text-gray-300 text-xs">{{ loop.revindex }}</td>
+        <td class="py-2.5 text-gray-700 font-mono text-xs">{{ h.watered_at[:16] }}</td>
+        <td class="py-2.5">
+          <span class="bg-blue-50 text-blue-700 text-xs font-semibold px-2 py-0.5 rounded-full">
+            {{ h.amount_ml }} ml
+          </span>
+        </td>
+        <td class="py-2.5 text-gray-400 text-xs">{{ h.notes or "—" }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="text-gray-400 text-sm">No watering history yet.</p>
+  {% endif %}
+</div>
+
+{% endblock %}
