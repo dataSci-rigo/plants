@@ -13,6 +13,7 @@ async def init_db():
                 name                    TEXT    NOT NULL UNIQUE,
                 plant_type              TEXT,
                 pot_depth_cm            REAL,
+                pot_width_cm            REAL,
                 watering_frequency_days INTEGER NOT NULL DEFAULT 7,
                 watering_amount_ml      INTEGER NOT NULL DEFAULT 200,
                 notes                   TEXT,
@@ -52,14 +53,20 @@ async def init_db():
             );
         """)
         await db.commit()
+        # Migration: add pot_width_cm to existing databases
+        try:
+            await db.execute("ALTER TABLE plants ADD COLUMN pot_width_cm REAL")
+            await db.commit()
+        except Exception:
+            pass  # column already exists
 
 
-async def add_plant(name, plant_type, pot_depth_cm, watering_frequency_days, watering_amount_ml) -> int:
+async def add_plant(name, plant_type, pot_depth_cm, pot_width_cm, watering_frequency_days, watering_amount_ml) -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            """INSERT INTO plants (name, plant_type, pot_depth_cm, watering_frequency_days, watering_amount_ml)
-               VALUES (?, ?, ?, ?, ?)""",
-            (name, plant_type, pot_depth_cm, watering_frequency_days, watering_amount_ml),
+            """INSERT INTO plants (name, plant_type, pot_depth_cm, pot_width_cm, watering_frequency_days, watering_amount_ml)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (name, plant_type, pot_depth_cm, pot_width_cm, watering_frequency_days, watering_amount_ml),
         )
         await db.commit()
         return cursor.lastrowid

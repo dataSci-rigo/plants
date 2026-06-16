@@ -14,10 +14,10 @@ from telegram.ext import (
 
 import db
 from handlers import (
-    AMOUNT, FREQUENCY, NAME, PHOTO, PLANT_TYPE, POT_DEPTH,
+    AMOUNT, FREQUENCY, NAME, PHOTO, PLANT_TYPE, POT_DEPTH, POT_WIDTH,
     health_callback, health_command, list_plants, onboard_amount,
     onboard_cancel, onboard_frequency, onboard_name, onboard_photo,
-    onboard_pot_depth, onboard_start, onboard_type, photo_command,
+    onboard_pot_depth, onboard_pot_width, onboard_start, onboard_type, photo_command,
     start, status_command, water_command,
     handle_photo_reply, handle_reply,
     settopic_command, startserver_command, stopserver_command,
@@ -55,6 +55,7 @@ def main():
             NAME:       [MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_name)],
             PLANT_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_type)],
             POT_DEPTH:  [MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_pot_depth)],
+            POT_WIDTH:  [MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_pot_width)],
             FREQUENCY:  [MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_frequency)],
             AMOUNT:     [MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_amount)],
             PHOTO: [

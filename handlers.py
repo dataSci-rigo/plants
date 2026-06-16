@@ -13,7 +13,7 @@ from ai import analyze_plant_health
 logger = logging.getLogger(__name__)
 
 # Onboarding conversation states
-NAME, PLANT_TYPE, POT_DEPTH, FREQUENCY, AMOUNT, PHOTO = range(6)
+NAME, PLANT_TYPE, POT_DEPTH, POT_WIDTH, FREQUENCY, AMOUNT, PHOTO = range(7)
 
 # Flask server subprocess handle (module-level so it persists across calls)
 _flask_process: subprocess.Popen | None = None
@@ -101,7 +101,7 @@ async def startserver_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("⚠️ Server is already running. Use /stopserver to stop it.")
         return
 
-    port = int(os.getenv("FLASK_PORT", 5000))
+    port = int(os.getenv("PORT_PLANTS", os.getenv("FLASK_PORT", 5060)))
     web_py = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web.py")
 
     _flask_process = subprocess.Popen(
@@ -397,34 +397,119 @@ async def onboard_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def onboard_pot_depth(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        context.user_data["pot_depth_cm"] = float(update.message.text.strip())
-    except ValueError:
-        await update.message.reply_text("Enter a number in cm (e.g. `15`).", parse_mode="Markdown")
-        return POT_DEPTH
+    text = update.message.text.strip().lower()
+    if text in ("?", "idk", "skip", "unknown"):
+        context.user_data["pot_depth_cm"] = None
+    else:
+        try:
+            context.user_data["pot_depth_cm"] = float(text)
+        except ValueError:
+            await update.message.reply_text("Enter a number in cm (e.g. `20`) or `?` to skip.", parse_mode="Markdown")
+            return POT_DEPTH
+    await update.message.reply_text("How *wide* is the pot? (cm, e.g. `25`) — or `?` to skip.", parse_mode="Markdown")
+    return POT_WIDTH
+
+
+async def onboard_pot_width(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip().lower()
+    if text in ("?", "idk", "skip", "unknown"):
+        context.user_data["pot_width_cm"] = None
+    else:
+        try:
+            context.user_data["pot_width_cm"] = float(text)
+        except ValueError:
+            await update.message.reply_text("Enter a number in cm (e.g. `25`) or `?` to skip.", parse_mode="Markdown")
+            return POT_WIDTH
     await update.message.reply_text(
-        "How often does it need watering? (days, e.g. `7`)", parse_mode="Markdown"
+        "How often does it need watering? (days, e.g. `7`) — or `?` for a suggestion.",
+        parse_mode="Markdown",
     )
     return FREQUENCY
 
 
+_UNSURE = {"?", "idk", "i don't know", "not sure", "unsure", "unknown", "help", "idc"}
+
+
 async def onboard_frequency(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from ai import suggest_watering_schedule
+    text = update.message.text.strip().lower()
+
+    if text in _UNSURE:
+        await update.message.reply_text("🔍 Looking up care requirements for your plant…")
+        try:
+            rec = await suggest_watering_schedule(
+                context.user_data["name"],
+                context.user_data["plant_type"],
+                context.user_data.get("pot_depth_cm"),
+            )
+            context.user_data["watering_frequency_days"] = rec["frequency_days"]
+            context.user_data["watering_amount_ml"] = rec["amount_ml"]
+            note = f"\n_{rec['note']}_" if rec.get("note") else ""
+            await update.message.reply_text(
+                f"✅ Recommendation for *{context.user_data['plant_type']}*:\n"
+                f"• Every *{rec['frequency_days']} days*\n"
+                f"• *{rec['amount_ml']} ml* per session{note}\n\n"
+                "Both saved! Last step: send a *photo* or type `skip`.",
+                parse_mode="Markdown",
+            )
+            return PHOTO  # skip AMOUNT — both values are filled
+        except Exception as e:
+            logger.error(f"Schedule lookup failed: {e}")
+            await update.message.reply_text(
+                "Couldn't reach the AI right now. Enter frequency in days (e.g. `7`):",
+                parse_mode="Markdown",
+            )
+            return FREQUENCY
+
     try:
-        context.user_data["watering_frequency_days"] = int(update.message.text.strip())
+        context.user_data["watering_frequency_days"] = int(text)
     except ValueError:
-        await update.message.reply_text("Enter a whole number of days (e.g. `7`).", parse_mode="Markdown")
+        await update.message.reply_text(
+            "Enter a whole number of days (e.g. `7`), or `?` for a recommendation.",
+            parse_mode="Markdown",
+        )
         return FREQUENCY
     await update.message.reply_text(
-        "How much water per session? (ml, e.g. `200`)", parse_mode="Markdown"
+        "How much water per session? (ml, e.g. `200`) — or `?` for a suggestion.",
+        parse_mode="Markdown",
     )
     return AMOUNT
 
 
 async def onboard_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from ai import suggest_watering_schedule
+    text = update.message.text.strip().lower()
+
+    if text in _UNSURE:
+        await update.message.reply_text("🔍 Looking up a recommendation…")
+        try:
+            rec = await suggest_watering_schedule(
+                context.user_data["name"],
+                context.user_data["plant_type"],
+                context.user_data.get("pot_depth_cm"),
+            )
+            context.user_data["watering_amount_ml"] = rec["amount_ml"]
+            await update.message.reply_text(
+                f"✅ Suggested *{rec['amount_ml']} ml* per session for a {context.user_data['plant_type']}. Saved!\n\n"
+                "Last step: send a *photo* or type `skip`.",
+                parse_mode="Markdown",
+            )
+            return PHOTO
+        except Exception as e:
+            logger.error(f"Amount lookup failed: {e}")
+            await update.message.reply_text(
+                "Couldn't reach the AI right now. Enter the amount in ml (e.g. `200`):",
+                parse_mode="Markdown",
+            )
+            return AMOUNT
+
     try:
-        context.user_data["watering_amount_ml"] = int(update.message.text.strip())
+        context.user_data["watering_amount_ml"] = int(text)
     except ValueError:
-        await update.message.reply_text("Enter a whole number in ml (e.g. `200`).", parse_mode="Markdown")
+        await update.message.reply_text(
+            "Enter a whole number in ml (e.g. `200`) or `?` for a suggestion.",
+            parse_mode="Markdown",
+        )
         return AMOUNT
     await update.message.reply_text(
         "Last step: send a *photo* of the plant, or type `skip` to add it later.",
@@ -446,7 +531,8 @@ async def onboard_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     plant_id = await db.add_plant(
         name=data["name"],
         plant_type=data["plant_type"],
-        pot_depth_cm=data["pot_depth_cm"],
+        pot_depth_cm=data.get("pot_depth_cm"),
+        pot_width_cm=data.get("pot_width_cm"),
         watering_frequency_days=data["watering_frequency_days"],
         watering_amount_ml=data["watering_amount_ml"],
     )
@@ -454,11 +540,13 @@ async def onboard_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if image_data:
         await db.update_plant_image(plant_id, image_data, file_id)
 
+    depth = f"{data.get('pot_depth_cm')} cm" if data.get("pot_depth_cm") else "?"
+    width = f"{data.get('pot_width_cm')} cm" if data.get("pot_width_cm") else "?"
     context.user_data.clear()
     await update.message.reply_text(
         f"✅ *{data['name']}* added!\n\n"
         f"Type: {data['plant_type']}\n"
-        f"Pot depth: {data['pot_depth_cm']} cm\n"
+        f"Pot: {depth} deep × {width} wide\n"
         f"Waters every {data['watering_frequency_days']} days, {data['watering_amount_ml']} ml\n\n"
         "Use /list to see all your plants.",
         parse_mode="Markdown",
