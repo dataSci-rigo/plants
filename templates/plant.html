@@ -27,12 +27,76 @@
 
       <div class="mt-5 grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div class="bg-green-50 rounded-xl p-3">
+          <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Location</p>
+          <p class="text-lg font-bold text-green-800">{{ plant.location or "?" }}</p>
+        </div>
+        {% if plant.location != "ground" %}
+        <div class="bg-green-50 rounded-xl p-3">
           <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Pot depth</p>
           <p class="text-lg font-bold text-green-800">{{ plant.pot_depth_cm or "?" }} cm</p>
         </div>
         <div class="bg-green-50 rounded-xl p-3">
           <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Pot width</p>
           <p class="text-lg font-bold text-green-800">{{ plant.pot_width_cm or "?" }} cm</p>
+        </div>
+        {% endif %}
+        <div class="bg-green-50 rounded-xl p-3">
+          <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Soil alkalinity</p>
+          <p class="text-lg font-bold text-green-800">{{ plant.soil_alkalinity or "?" }}</p>
+        </div>
+        <div class="bg-green-50 rounded-xl p-3">
+          <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Soil type</p>
+          <p class="text-lg font-bold text-green-800">{{ plant.soil_type or "?" }}</p>
+        </div>
+        {% if plant.soil_volume_l %}
+        <div class="bg-green-50 rounded-xl p-3">
+          <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Soil volume</p>
+          <p class="text-lg font-bold text-green-800">~{{ plant.soil_volume_l }} L</p>
+          <p class="text-xs text-gray-400">cylindrical estimate</p>
+        </div>
+        {% endif %}
+        <div class="bg-green-50 rounded-xl p-3">
+          <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Fertilizer type</p>
+          <p class="text-lg font-bold text-green-800">{{ plant.fertilizer_type or "none" }}</p>
+        </div>
+        {% if plant.fertilizer_type %}
+        <div class="bg-green-50 rounded-xl p-3">
+          <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Fertilizer amount</p>
+          <p class="text-lg font-bold text-green-800">{{ plant.fertilizer_amount or "?" }}</p>
+        </div>
+        <div class="bg-green-50 rounded-xl p-3">
+          <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Fertilize every</p>
+          <p class="text-lg font-bold text-green-800">
+            {% if plant.fertilizer_frequency_days %}{{ plant.fertilizer_frequency_days }}d{% else %}?{% endif %}
+          </p>
+        </div>
+        {% endif %}
+        <div class="bg-green-50 rounded-xl p-3">
+          <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Facing</p>
+          <p class="text-lg font-bold text-green-800">{{ plant.facing or "?" }}</p>
+        </div>
+        <div class="bg-green-50 rounded-xl p-3">
+          <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Height</p>
+          <p class="text-lg font-bold text-green-800">{{ plant.height_cm or "?" }} cm</p>
+        </div>
+        <div class="bg-yellow-50 rounded-xl p-3">
+          <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Sun (gets)</p>
+          <p class="text-lg font-bold text-yellow-700">{{ plant.sunlight_hours_actual or "?" }}h</p>
+        </div>
+        <div class="bg-yellow-50 rounded-xl p-3">
+          <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Sun (needs)</p>
+          <p class="text-lg font-bold text-yellow-700">{{ plant.sunlight_hours_needed or "?" }}h
+            {% if plant.sunlight_hours_actual and plant.sunlight_hours_needed %}
+              {% set gap = plant.sunlight_hours_needed - plant.sunlight_hours_actual %}
+              {% if gap > 0.5 %}
+                <span class="text-xs text-red-500 font-normal">(+{{ "%.1f"|format(gap) }}h needed)</span>
+              {% elif gap < -0.5 %}
+                <span class="text-xs text-green-500 font-normal">(surplus)</span>
+              {% else %}
+                <span class="text-xs text-green-500 font-normal">(✓)</span>
+              {% endif %}
+            {% endif %}
+          </p>
         </div>
         <div class="bg-green-50 rounded-xl p-3">
           <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Frequency</p>
@@ -53,6 +117,13 @@
       {% endif %}
 
       <p class="mt-4 text-xs text-gray-400">Added {{ plant.created_at[:10] }}</p>
+
+      <div class="mt-4">
+        <a href="/plant/{{ plant.id }}/edit"
+           class="inline-block bg-green-700 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-green-800 transition-colors">
+          ✏️ Edit plant
+        </a>
+      </div>
     </div>
 
   </div>
@@ -91,6 +162,40 @@
   </div>
   {% else %}
   <p class="text-gray-400 text-sm">No watering history yet.</p>
+  {% endif %}
+</div>
+
+<!-- Height history -->
+<div class="mt-6 bg-white rounded-2xl shadow p-6">
+  <h2 class="text-xl font-bold text-green-800 mb-4">Height History</h2>
+
+  {% if height_history %}
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="text-left text-gray-400 border-b border-gray-100">
+          <th class="pb-3 font-medium">#</th>
+          <th class="pb-3 font-medium">Date</th>
+          <th class="pb-3 font-medium">Height</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for h in height_history %}
+      <tr class="border-b border-gray-50 hover:bg-green-50 transition-colors">
+        <td class="py-2.5 text-gray-300 text-xs">{{ loop.revindex }}</td>
+        <td class="py-2.5 text-gray-700 font-mono text-xs">{{ h.measured_at[:16] }}</td>
+        <td class="py-2.5">
+          <span class="bg-green-50 text-green-700 text-xs font-semibold px-2 py-0.5 rounded-full">
+            {{ h.height_cm }} cm
+          </span>
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="text-gray-400 text-sm">No height readings yet. Use <code>/height &lt;plant&gt; &lt;cm&gt;</code> to log one.</p>
   {% endif %}
 </div>
 

@@ -1,8 +1,18 @@
 import aiosqlite
+import math
 from datetime import datetime, date
 from typing import Optional
 
 DB_PATH = "plants.db"
+
+
+def estimate_soil_volume_l(pot_depth_cm, pot_width_cm) -> Optional[float]:
+    """Rough soil volume for a cylindrical pot, in liters."""
+    if not pot_depth_cm or not pot_width_cm:
+        return None
+    radius_cm = pot_width_cm / 2
+    volume_cm3 = math.pi * radius_cm ** 2 * pot_depth_cm
+    return round(volume_cm3 / 1000, 2)
 
 
 async def init_db():
@@ -14,12 +24,31 @@ async def init_db():
                 plant_type              TEXT,
                 pot_depth_cm            REAL,
                 pot_width_cm            REAL,
+                location                TEXT,
+                soil_alkalinity         TEXT,
+                soil_type               TEXT,
+                soil_volume_l           REAL,
+                fertilizer_type         TEXT,
+                fertilizer_amount       TEXT,
+                fertilizer_frequency_days INTEGER,
+                facing                  TEXT,
+                height_cm               REAL,
+                sunlight_hours_actual   REAL,
+                sunlight_hours_needed   REAL,
                 watering_frequency_days INTEGER NOT NULL DEFAULT 7,
                 watering_amount_ml      INTEGER NOT NULL DEFAULT 200,
                 notes                   TEXT,
                 image_data              BLOB,
                 telegram_file_id        TEXT,
                 created_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS height_history (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                plant_id    INTEGER NOT NULL,
+                height_cm   REAL NOT NULL,
+                measured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (plant_id) REFERENCES plants(id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS watering_history (
@@ -53,22 +82,60 @@ async def init_db():
             );
         """)
         await db.commit()
-        # Migration: add pot_width_cm to existing databases
-        try:
-            await db.execute("ALTER TABLE plants ADD COLUMN pot_width_cm REAL")
-            await db.commit()
-        except Exception:
-            pass  # column already exists
+        # Migrations: add columns introduced after the initial schema, for existing databases
+        for column_sql in (
+            "ALTER TABLE plants ADD COLUMN pot_width_cm REAL",
+            "ALTER TABLE plants ADD COLUMN location TEXT",
+            "ALTER TABLE plants ADD COLUMN soil_alkalinity TEXT",
+            "ALTER TABLE plants ADD COLUMN soil_type TEXT",
+            "ALTER TABLE plants ADD COLUMN soil_volume_l REAL",
+            "ALTER TABLE plants ADD COLUMN fertilizer TEXT",
+            "ALTER TABLE plants ADD COLUMN fertilizer_type TEXT",
+            "ALTER TABLE plants ADD COLUMN fertilizer_amount TEXT",
+            "ALTER TABLE plants ADD COLUMN fertilizer_frequency_days INTEGER",
+            "ALTER TABLE plants ADD COLUMN facing TEXT",
+            "ALTER TABLE plants ADD COLUMN height_cm REAL",
+            "ALTER TABLE plants ADD COLUMN sunlight_hours_actual REAL",
+            "ALTER TABLE plants ADD COLUMN sunlight_hours_needed REAL",
+        ):
+            try:
+                await db.execute(column_sql)
+                await db.commit()
+            except Exception:
+                pass  # column already exists
 
 
-async def add_plant(name, plant_type, pot_depth_cm, pot_width_cm, watering_frequency_days, watering_amount_ml) -> int:
+async def add_plant(
+    name, plant_type, pot_depth_cm, pot_width_cm, location, soil_alkalinity,
+    soil_type, fertilizer_type, fertilizer_amount, fertilizer_frequency_days,
+    facing, height_cm, sunlight_hours_actual, sunlight_hours_needed,
+    watering_frequency_days, watering_amount_ml,
+) -> int:
+    soil_volume_l = estimate_soil_volume_l(pot_depth_cm, pot_width_cm) if location == "pot" else None
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            """INSERT INTO plants (name, plant_type, pot_depth_cm, pot_width_cm, watering_frequency_days, watering_amount_ml)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (name, plant_type, pot_depth_cm, pot_width_cm, watering_frequency_days, watering_amount_ml),
+            """INSERT INTO plants (
+                   name, plant_type, pot_depth_cm, pot_width_cm, location,
+                   soil_alkalinity, soil_type, soil_volume_l, fertilizer_type,
+                   fertilizer_amount, fertilizer_frequency_days, facing, height_cm,
+                   sunlight_hours_actual, sunlight_hours_needed,
+                   watering_frequency_days, watering_amount_ml
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                name, plant_type, pot_depth_cm, pot_width_cm, location,
+                soil_alkalinity, soil_type, soil_volume_l, fertilizer_type,
+                fertilizer_amount, fertilizer_frequency_days, facing, height_cm,
+                sunlight_hours_actual, sunlight_hours_needed,
+                watering_frequency_days, watering_amount_ml,
+            ),
         )
         await db.commit()
+        if height_cm is not None:
+            await db.execute(
+                "INSERT INTO height_history (plant_id, height_cm) VALUES (?, ?)",
+                (cursor.lastrowid, height_cm),
+            )
+            await db.commit()
         return cursor.lastrowid
 
 
@@ -101,6 +168,27 @@ async def update_plant_image(plant_id: int, image_data: bytes, file_id: str):
             "UPDATE plants SET image_data = ?, telegram_file_id = ? WHERE id = ?",
             (image_data, file_id, plant_id),
         )
+        await db.commit()
+
+
+async def update_plant(plant_id: int, **fields):
+    """Update any subset of plant fields. Recomputes soil_volume_l if pot dims change."""
+    if not fields:
+        return
+    # Recompute soil volume if relevant dims are being updated
+    if "pot_depth_cm" in fields or "pot_width_cm" in fields:
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            row = await (await db.execute("SELECT pot_depth_cm, pot_width_cm, location FROM plants WHERE id=?", (plant_id,))).fetchone()
+        depth = fields.get("pot_depth_cm", row["pot_depth_cm"] if row else None)
+        width = fields.get("pot_width_cm", row["pot_width_cm"] if row else None)
+        loc = fields.get("location", row["location"] if row else None)
+        fields["soil_volume_l"] = estimate_soil_volume_l(depth, width) if loc == "pot" else None
+
+    set_clause = ", ".join(f"{k} = ?" for k in fields)
+    values = list(fields.values()) + [plant_id]
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(f"UPDATE plants SET {set_clause} WHERE id = ?", values)
         await db.commit()
 
 
@@ -164,6 +252,28 @@ async def get_plants_needing_water():
             HAVING last_watered IS NULL
                OR julianday('now') - julianday(last_watered) >= p.watering_frequency_days
         """)
+        return await cursor.fetchall()
+
+
+async def log_height(plant_id: int, height_cm: float):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO height_history (plant_id, height_cm) VALUES (?, ?)",
+            (plant_id, height_cm),
+        )
+        await db.execute(
+            "UPDATE plants SET height_cm = ? WHERE id = ?", (height_cm, plant_id)
+        )
+        await db.commit()
+
+
+async def get_height_history(plant_id: int, limit: int = 20):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM height_history WHERE plant_id = ? ORDER BY measured_at DESC LIMIT ?",
+            (plant_id, limit),
+        )
         return await cursor.fetchall()
 
 

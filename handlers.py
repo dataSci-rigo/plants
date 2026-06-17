@@ -13,7 +13,23 @@ from ai import analyze_plant_health
 logger = logging.getLogger(__name__)
 
 # Onboarding conversation states
-NAME, PLANT_TYPE, POT_DEPTH, POT_WIDTH, FREQUENCY, AMOUNT, PHOTO = range(7)
+(
+    NAME, PLANT_TYPE, LOCATION, POT_DEPTH, POT_WIDTH, SOIL_ALKALINITY,
+    SOIL_TYPE, FERTILIZER_TYPE, FERTILIZER_AMOUNT, FERTILIZER_FREQUENCY,
+    FACING, HEIGHT, SUNLIGHT_ACTUAL, SUNLIGHT_NEEDED, FREQUENCY, AMOUNT, PHOTO,
+) = range(17)
+
+_FACING_NORMALIZE = {
+    "north": "north", "n": "north",
+    "south": "south", "s": "south",
+    "east": "east", "e": "east",
+    "west": "west", "w": "west",
+    "northeast": "northeast", "north east": "northeast", "ne": "northeast",
+    "northwest": "northwest", "north west": "northwest", "nw": "northwest",
+    "southeast": "southeast", "south east": "southeast", "se": "southeast",
+    "southwest": "southwest", "south west": "southwest", "sw": "southwest",
+    "no shade": "no shade", "noshade": "no shade", "full sun": "no shade", "none": "no shade",
+}
 
 # Flask server subprocess handle (module-level so it persists across calls)
 _flask_process: subprocess.Popen | None = None
@@ -55,9 +71,6 @@ def _get_tailscale_ip() -> str | None:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = str(update.effective_chat.id)
     await db.set_setting("owner_chat_id", chat_id)
-    # Set as routing target only if one isn't already configured
-    if not await db.get_setting("target_chat_id"):
-        await db.set_setting("target_chat_id", chat_id)
     await update.message.reply_text(
         "🌱 *Plant Tracker*\n\n"
         "/add — Onboard a new plant\n"
@@ -66,7 +79,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/status `<plant>` — Watering history\n"
         "/photo `<plant>` — Get plant photo\n"
         "/health `<plant>` — AI health check\n"
-        "/settopic — Route all messages to this topic\n"
+        "/height `<plant>` `<cm>` — Log a new height reading\n"
         "/startserver — Start the plant dashboard\n"
         "/stopserver — Stop the dashboard\n\n"
         "Reply to any daily recommendation to log watering or update a photo.",
@@ -210,10 +223,27 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     history = await db.get_watering_history(plant["id"], limit=10)
+
+    if plant["fertilizer_type"]:
+        fert_line = plant["fertilizer_type"]
+        if plant["fertilizer_amount"]:
+            fert_line += f", {plant['fertilizer_amount']}"
+        if plant["fertilizer_frequency_days"]:
+            fert_line += f", every {plant['fertilizer_frequency_days']} days"
+    else:
+        fert_line = "none"
+
     lines = [
         f"🌿 *{plant['name']}*",
         f"Type: {plant['plant_type'] or 'Unknown'}",
+        f"Location: {plant['location'] or '?'}",
         f"Pot depth: {plant['pot_depth_cm'] or '?'} cm",
+        f"Pot width: {plant['pot_width_cm'] or '?'} cm",
+        f"Soil volume: {plant['soil_volume_l'] or '?'} L",
+        f"Soil: {plant['soil_alkalinity'] or '?'}, {plant['soil_type'] or '?'}",
+        f"Fertilizer: {fert_line}",
+        f"Facing: {plant['facing'] or '?'}",
+        f"Height: {plant['height_cm'] or '?'} cm",
         f"Watering frequency: every {plant['watering_frequency_days']} days",
         f"Amount per session: {plant['watering_amount_ml']} ml\n",
         "💧 *Recent waterings:*",
@@ -392,6 +422,28 @@ async def onboard_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def onboard_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["plant_type"] = update.message.text.strip()
+    await update.message.reply_text(
+        "Is it planted in a *pot* or in the *ground*?", parse_mode="Markdown"
+    )
+    return LOCATION
+
+
+async def onboard_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip().lower()
+    if text not in ("pot", "ground"):
+        await update.message.reply_text("Please answer `pot` or `ground`.", parse_mode="Markdown")
+        return LOCATION
+    context.user_data["location"] = text
+
+    if text == "ground":
+        context.user_data["pot_depth_cm"] = None
+        context.user_data["pot_width_cm"] = None
+        await update.message.reply_text(
+            "What's the soil alkalinity? (e.g. `acidic`, `neutral`, `alkaline`, or a pH like `6.5`) — or `?` to skip.",
+            parse_mode="Markdown",
+        )
+        return SOIL_ALKALINITY
+
     await update.message.reply_text("How deep is the pot? (cm, e.g. `15`)", parse_mode="Markdown")
     return POT_DEPTH
 
@@ -420,6 +472,177 @@ async def onboard_pot_width(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             await update.message.reply_text("Enter a number in cm (e.g. `25`) or `?` to skip.", parse_mode="Markdown")
             return POT_WIDTH
+    await update.message.reply_text(
+        "What's the soil alkalinity? (e.g. `acidic`, `neutral`, `alkaline`, or a pH like `6.5`) — or `?` to skip.",
+        parse_mode="Markdown",
+    )
+    return SOIL_ALKALINITY
+
+
+async def onboard_soil_alkalinity(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    context.user_data["soil_alkalinity"] = None if text.lower() in ("?", "idk", "skip", "unknown") else text
+    await update.message.reply_text(
+        "What soil type? (e.g. `potting mix`, `clay`, `sandy`, `loam`) — or `?` to skip.",
+        parse_mode="Markdown",
+    )
+    return SOIL_TYPE
+
+
+async def onboard_soil_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    context.user_data["soil_type"] = None if text.lower() in ("?", "idk", "skip", "unknown") else text
+    await update.message.reply_text(
+        "What *type* of fertilizer do you use, if any? (e.g. `fish emulsion`, `10-10-10`) — or `none`/`?` to skip.",
+        parse_mode="Markdown",
+    )
+    return FERTILIZER_TYPE
+
+
+_NONE_WORDS = ("?", "idk", "skip", "unknown", "none")
+
+
+async def onboard_fertilizer_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if text.lower() in _NONE_WORDS:
+        context.user_data["fertilizer_type"] = None
+        context.user_data["fertilizer_amount"] = None
+        context.user_data["fertilizer_frequency_days"] = None
+        await update.message.reply_text(
+            "Which way does it face — `north`, `south`, `east`, `west`, or `no shade`? — or `?` to skip.",
+            parse_mode="Markdown",
+        )
+        return FACING
+
+    context.user_data["fertilizer_type"] = text
+    await update.message.reply_text(
+        "How much fertilizer per application? (e.g. `1 tbsp`, `10 ml`) — or `?` to skip.",
+        parse_mode="Markdown",
+    )
+    return FERTILIZER_AMOUNT
+
+
+async def onboard_fertilizer_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    context.user_data["fertilizer_amount"] = None if text.lower() in _NONE_WORDS else text
+    await update.message.reply_text(
+        "How often do you fertilize? (days, e.g. `30`) — or `?` to skip.",
+        parse_mode="Markdown",
+    )
+    return FERTILIZER_FREQUENCY
+
+
+async def onboard_fertilizer_frequency(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip().lower()
+    if text in _NONE_WORDS:
+        context.user_data["fertilizer_frequency_days"] = None
+    else:
+        try:
+            context.user_data["fertilizer_frequency_days"] = int(text)
+        except ValueError:
+            await update.message.reply_text(
+                "Enter a whole number of days (e.g. `30`) or `?` to skip.", parse_mode="Markdown"
+            )
+            return FERTILIZER_FREQUENCY
+    await update.message.reply_text(
+        "Which way does it face — `north`, `south`, `east`, `west`, or `no shade`? — or `?` to skip.",
+        parse_mode="Markdown",
+    )
+    return FACING
+
+
+async def onboard_facing(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip().lower()
+    if text in ("?", "idk", "skip", "unknown"):
+        context.user_data["facing"] = None
+    elif text in _FACING_NORMALIZE:
+        context.user_data["facing"] = _FACING_NORMALIZE[text]
+    else:
+        await update.message.reply_text(
+            "Please answer a compass direction (e.g. `north`, `southwest`, `NW`) or `no shade`, or `?` to skip.",
+            parse_mode="Markdown",
+        )
+        return FACING
+    await update.message.reply_text(
+        "How tall is the plant today? (cm, e.g. `30`) — or `?` to skip.", parse_mode="Markdown"
+    )
+    return HEIGHT
+
+
+async def onboard_height(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip().lower()
+    if text in ("?", "idk", "skip", "unknown"):
+        context.user_data["height_cm"] = None
+    else:
+        try:
+            context.user_data["height_cm"] = float(text)
+        except ValueError:
+            await update.message.reply_text("Enter a number in cm (e.g. `30`) or `?` to skip.", parse_mode="Markdown")
+            return HEIGHT
+    await update.message.reply_text(
+        "How many hours of *direct sunlight* does it get per day? (e.g. `4`) — or `?` to skip.",
+        parse_mode="Markdown",
+    )
+    return SUNLIGHT_ACTUAL
+
+
+async def onboard_sunlight_actual(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip().lower()
+    if text in ("?", "idk", "skip", "unknown"):
+        context.user_data["sunlight_hours_actual"] = None
+    else:
+        try:
+            context.user_data["sunlight_hours_actual"] = float(text)
+        except ValueError:
+            await update.message.reply_text("Enter a number (e.g. `4`) or `?` to skip.", parse_mode="Markdown")
+            return SUNLIGHT_ACTUAL
+    await update.message.reply_text(
+        "How many hours of sunlight does it *need*? (e.g. `6`) — or `?` for a suggestion.",
+        parse_mode="Markdown",
+    )
+    return SUNLIGHT_NEEDED
+
+
+async def onboard_sunlight_needed(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from ai import suggest_sunlight_needs
+    text = update.message.text.strip().lower()
+    if text in _UNSURE:
+        await update.message.reply_text("🔍 Looking up sunlight requirements…")
+        try:
+            rec = await suggest_sunlight_needs(
+                context.user_data["name"],
+                context.user_data["plant_type"],
+                context.user_data.get("facing"),
+            )
+            context.user_data["sunlight_hours_needed"] = rec["hours_needed"]
+            note = f"\n_{rec['note']}_" if rec.get("note") else ""
+            actual = context.user_data.get("sunlight_hours_actual")
+            gap = ""
+            if actual is not None:
+                diff = rec["hours_needed"] - actual
+                if diff > 0.5:
+                    gap = f"\n⚠️ Currently getting {actual}h — needs {diff:.1f}h more."
+                elif diff < -0.5:
+                    gap = f"\n✅ Getting {actual}h — more than enough."
+            await update.message.reply_text(
+                f"☀️ *{context.user_data['plant_type']}* needs ~*{rec['hours_needed']}h* of direct sun.{note}{gap}\n\n"
+                "How often does it need watering? (days, e.g. `7`) — or `?` for a suggestion.",
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            logger.error(f"Sunlight lookup failed: {e}")
+            context.user_data["sunlight_hours_needed"] = None
+            await update.message.reply_text(
+                "Couldn't reach the AI. How often does it need watering? (days, e.g. `7`)",
+                parse_mode="Markdown",
+            )
+        return FREQUENCY
+
+    try:
+        context.user_data["sunlight_hours_needed"] = float(text)
+    except ValueError:
+        await update.message.reply_text("Enter a number (e.g. `6`) or `?` for a suggestion.", parse_mode="Markdown")
+        return SUNLIGHT_NEEDED
     await update.message.reply_text(
         "How often does it need watering? (days, e.g. `7`) — or `?` for a suggestion.",
         parse_mode="Markdown",
@@ -533,6 +756,16 @@ async def onboard_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         plant_type=data["plant_type"],
         pot_depth_cm=data.get("pot_depth_cm"),
         pot_width_cm=data.get("pot_width_cm"),
+        location=data.get("location"),
+        soil_alkalinity=data.get("soil_alkalinity"),
+        soil_type=data.get("soil_type"),
+        fertilizer_type=data.get("fertilizer_type"),
+        fertilizer_amount=data.get("fertilizer_amount"),
+        fertilizer_frequency_days=data.get("fertilizer_frequency_days"),
+        facing=data.get("facing"),
+        height_cm=data.get("height_cm"),
+        sunlight_hours_actual=data.get("sunlight_hours_actual"),
+        sunlight_hours_needed=data.get("sunlight_hours_needed"),
         watering_frequency_days=data["watering_frequency_days"],
         watering_amount_ml=data["watering_amount_ml"],
     )
@@ -540,18 +773,66 @@ async def onboard_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if image_data:
         await db.update_plant_image(plant_id, image_data, file_id)
 
-    depth = f"{data.get('pot_depth_cm')} cm" if data.get("pot_depth_cm") else "?"
-    width = f"{data.get('pot_width_cm')} cm" if data.get("pot_width_cm") else "?"
     context.user_data.clear()
+
+    if data.get("location") == "pot":
+        depth = f"{data.get('pot_depth_cm')} cm" if data.get("pot_depth_cm") else "?"
+        width = f"{data.get('pot_width_cm')} cm" if data.get("pot_width_cm") else "?"
+        location_line = f"Pot: {depth} deep × {width} wide"
+        volume = db.estimate_soil_volume_l(data.get("pot_depth_cm"), data.get("pot_width_cm"))
+        if volume:
+            location_line += f" (~{volume} L soil)"
+    else:
+        location_line = "Planted in the ground"
+
+    height_str = f"{data.get('height_cm')} cm" if data.get("height_cm") else "?"
+
+    if data.get("fertilizer_type"):
+        fert_line = data["fertilizer_type"]
+        if data.get("fertilizer_amount"):
+            fert_line += f", {data['fertilizer_amount']}"
+        if data.get("fertilizer_frequency_days"):
+            fert_line += f", every {data['fertilizer_frequency_days']} days"
+    else:
+        fert_line = "none"
+
     await update.message.reply_text(
         f"✅ *{data['name']}* added!\n\n"
         f"Type: {data['plant_type']}\n"
-        f"Pot: {depth} deep × {width} wide\n"
+        f"{location_line}\n"
+        f"Soil: {data.get('soil_alkalinity') or '?'}, {data.get('soil_type') or '?'}\n"
+        f"Fertilizer: {fert_line}\n"
+        f"Facing: {data.get('facing') or '?'}\n"
+        f"Height: {height_str}\n"
         f"Waters every {data['watering_frequency_days']} days, {data['watering_amount_ml']} ml\n\n"
-        "Use /list to see all your plants.",
+        "Use /list to see all your plants. Use /height to update height anytime.",
         parse_mode="Markdown",
     )
     return ConversationHandler.END
+
+
+# ── Height tracking ──────────────────────────────────────────────────────────
+
+async def height_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Usage: /height <plant name> <cm> — log a new height reading."""
+    if len(context.args) < 2 or not context.args[-1].replace(".", "", 1).isdigit():
+        await update.message.reply_text(
+            "Usage: `/height <plant name> <cm>`\ne.g. `/height Monstera 45`",
+            parse_mode="Markdown",
+        )
+        return
+
+    height_cm = float(context.args[-1])
+    plant_name = " ".join(context.args[:-1])
+    plant = await db.get_plant_by_name(plant_name)
+    if not plant:
+        await update.message.reply_text(f"Plant '{plant_name}' not found. Use /list to see all plants.")
+        return
+
+    await db.log_height(plant["id"], height_cm)
+    await update.message.reply_text(
+        f"📏 Logged *{height_cm} cm* for *{plant['name']}*", parse_mode="Markdown"
+    )
 
 
 async def onboard_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):

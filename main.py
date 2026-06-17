@@ -1,6 +1,6 @@
 import logging
 import os
-from datetime import time, timezone
+from datetime import time, timedelta, timezone
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import (
@@ -14,15 +14,21 @@ from telegram.ext import (
 
 import db
 from handlers import (
-    AMOUNT, FREQUENCY, NAME, PHOTO, PLANT_TYPE, POT_DEPTH, POT_WIDTH,
-    health_callback, health_command, list_plants, onboard_amount,
-    onboard_cancel, onboard_frequency, onboard_name, onboard_photo,
-    onboard_pot_depth, onboard_pot_width, onboard_start, onboard_type, photo_command,
+    AMOUNT, FACING, FERTILIZER_AMOUNT, FERTILIZER_FREQUENCY, FERTILIZER_TYPE,
+    FREQUENCY, HEIGHT, LOCATION, NAME, PHOTO, PLANT_TYPE, POT_DEPTH, POT_WIDTH,
+    SOIL_ALKALINITY, SOIL_TYPE, SUNLIGHT_ACTUAL, SUNLIGHT_NEEDED,
+    health_callback, health_command, height_command, list_plants, onboard_amount,
+    onboard_cancel, onboard_facing, onboard_fertilizer_amount,
+    onboard_fertilizer_frequency, onboard_fertilizer_type, onboard_frequency,
+    onboard_height, onboard_location, onboard_name, onboard_photo,
+    onboard_pot_depth, onboard_pot_width, onboard_soil_alkalinity,
+    onboard_soil_type, onboard_start, onboard_sunlight_actual, onboard_sunlight_needed,
+    onboard_type, photo_command,
     start, status_command, water_command,
     handle_photo_reply, handle_reply,
-    settopic_command, startserver_command, stopserver_command,
+    startserver_command, stopserver_command,
 )
-from scheduler import send_daily_recommendations
+from scheduler import send_daily_recommendations, send_height_reminder
 
 load_dotenv()
 
@@ -38,9 +44,9 @@ async def post_init(application: Application) -> None:
 
 
 def main():
-    token = os.getenv("TELEGRAM_TOKEN")
+    token = os.getenv("PLANT_TELEGRAM_TOKEN")
     if not token:
-        raise ValueError("TELEGRAM_TOKEN not set in .env")
+        raise ValueError("PLANT_TELEGRAM_TOKEN not set in .env")
 
     app = (
         Application.builder()
@@ -52,12 +58,22 @@ def main():
     onboarding = ConversationHandler(
         entry_points=[CommandHandler("add", onboard_start)],
         states={
-            NAME:       [MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_name)],
-            PLANT_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_type)],
-            POT_DEPTH:  [MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_pot_depth)],
-            POT_WIDTH:  [MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_pot_width)],
-            FREQUENCY:  [MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_frequency)],
-            AMOUNT:     [MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_amount)],
+            NAME:            [MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_name)],
+            PLANT_TYPE:      [MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_type)],
+            LOCATION:        [MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_location)],
+            POT_DEPTH:       [MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_pot_depth)],
+            POT_WIDTH:       [MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_pot_width)],
+            SOIL_ALKALINITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_soil_alkalinity)],
+            SOIL_TYPE:       [MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_soil_type)],
+            FERTILIZER_TYPE:      [MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_fertilizer_type)],
+            FERTILIZER_AMOUNT:    [MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_fertilizer_amount)],
+            FERTILIZER_FREQUENCY: [MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_fertilizer_frequency)],
+            FACING:          [MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_facing)],
+            HEIGHT:          [MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_height)],
+            SUNLIGHT_ACTUAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_sunlight_actual)],
+            SUNLIGHT_NEEDED: [MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_sunlight_needed)],
+            FREQUENCY:       [MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_frequency)],
+            AMOUNT:          [MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_amount)],
             PHOTO: [
                 MessageHandler(filters.PHOTO, onboard_photo),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, onboard_photo),
@@ -73,7 +89,7 @@ def main():
     app.add_handler(CommandHandler("status",      status_command))
     app.add_handler(CommandHandler("photo",       photo_command))
     app.add_handler(CommandHandler("health",      health_command))
-    app.add_handler(CommandHandler("settopic",    settopic_command))
+    app.add_handler(CommandHandler("height",      height_command))
     app.add_handler(CommandHandler("startserver", startserver_command))
     app.add_handler(CommandHandler("stopserver",  stopserver_command))
     app.add_handler(CallbackQueryHandler(health_callback, pattern=r"^health:\d+$"))
@@ -87,6 +103,14 @@ def main():
         send_daily_recommendations,
         time=time(hour=8, minute=0, tzinfo=timezone.utc),
         name="daily_plant_recommendations",
+    )
+
+    # Height check-in every 2 weeks at 09:00 UTC
+    app.job_queue.run_repeating(
+        send_height_reminder,
+        interval=timedelta(days=14),
+        first=time(hour=9, minute=0, tzinfo=timezone.utc),
+        name="biweekly_height_reminder",
     )
 
     app.run_polling(allowed_updates=Update.ALL_TYPES)

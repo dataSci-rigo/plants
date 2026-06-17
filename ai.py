@@ -36,6 +36,32 @@ async def suggest_watering_schedule(plant_name: str, plant_type: str, pot_depth_
         return {"frequency_days": 7, "amount_ml": 200, "note": ""}
 
 
+async def suggest_sunlight_needs(plant_name: str, plant_type: str, facing: str = None) -> dict:
+    client = anthropic.AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    facing_str = f", facing {facing}" if facing else ""
+    prompt = (
+        f'Plant: "{plant_name}" ({plant_type}){facing_str}.\n'
+        "How many hours of direct sunlight does this plant need per day? JSON only:\n"
+        '{"hours_needed": <float>, "note": "<one sentence>"}'
+    )
+    try:
+        resp = await client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=80,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = resp.content[0].text.strip()
+        m = re.search(r"\{.*\}", text, re.DOTALL)
+        data = json.loads(m.group()) if m else {}
+        return {
+            "hours_needed": float(data.get("hours_needed", 6.0)),
+            "note": data.get("note", ""),
+        }
+    except Exception as e:
+        logger.error(f"suggest_sunlight_needs failed: {e}")
+        return {"hours_needed": 6.0, "note": ""}
+
+
 async def analyze_plant_health(plant: dict, image_data: bytes | None) -> str:
     client = anthropic.AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 

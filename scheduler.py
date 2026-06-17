@@ -1,4 +1,5 @@
 import logging
+import os
 from datetime import datetime
 from telegram.ext import ContextTypes
 import db
@@ -7,19 +8,16 @@ from weather import fetch_weather, water_adjustment
 logger = logging.getLogger(__name__)
 
 
-async def _target(bot) -> tuple[int | None, int | None]:
-    """Return (chat_id, thread_id) to use for all outgoing bot messages."""
-    raw_chat = await db.get_setting("target_chat_id") or await db.get_setting("owner_chat_id")
-    raw_thread = await db.get_setting("target_thread_id")
-    chat_id = int(raw_chat) if raw_chat else None
-    thread_id = int(raw_thread) if raw_thread else None
-    return chat_id, thread_id
+async def _owner_chat_id() -> int | None:
+    """Return the owner's DM chat_id — env var takes priority, falls back to DB."""
+    raw = os.getenv("OWNER_CHAT_ID") or await db.get_setting("owner_chat_id")
+    return int(raw) if raw else None
 
 
 async def send_daily_recommendations(context: ContextTypes.DEFAULT_TYPE):
-    chat_id, thread_id = await _target(context.bot)
+    chat_id = await _owner_chat_id()
     if not chat_id:
-        logger.warning("No target chat set — skipping daily recommendations")
+        logger.warning("OWNER_CHAT_ID not set — skipping daily recommendations")
         return
 
     weather = await fetch_weather()
@@ -40,14 +38,11 @@ async def send_daily_recommendations(context: ContextTypes.DEFAULT_TYPE):
 
     plants = await db.get_plants_needing_water()
 
-    send_kwargs = {"chat_id": chat_id, "parse_mode": "Markdown"}
-    if thread_id:
-        send_kwargs["message_thread_id"] = thread_id
-
     if not plants:
         await context.bot.send_message(
+            chat_id=chat_id,
             text=f"{weather_header}✅ All plants are on schedule today — no watering needed!",
-            **send_kwargs,
+            parse_mode="Markdown",
         )
         return
 
@@ -73,7 +68,27 @@ async def send_daily_recommendations(context: ContextTypes.DEFAULT_TYPE):
             f"Reply with the amount you gave (e.g. `{recommended_ml}`) or `skip`."
         )
 
-        msg = await context.bot.send_message(text=text, **send_kwargs)
+        msg = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
         await db.save_plant_message(plant["id"], chat_id, msg.message_id)
 
-    logger.info(f"Sent {len(plants)} recommendations → chat {chat_id} thread {thread_id}")
+    logger.info(f"Sent {len(plants)} recommendations → DM {chat_id}")
+
+
+async def send_height_reminder(context: ContextTypes.DEFAULT_TYPE):
+    chat_id = await _owner_chat_id()
+    if not chat_id:
+        logger.warning("OWNER_CHAT_ID not set — skipping height reminder")
+        return
+
+    plants = await db.get_all_plants()
+    if not plants:
+        return
+
+    lines = ["📏 *Time for a height check-in!*\n", "Reply with `/height <plant> <cm>` for each:"]
+    for plant in plants:
+        last = plant["height_cm"]
+        last_str = f" (last: {last} cm)" if last is not None else ""
+        lines.append(f"• `/height {plant['name']} <cm>`{last_str}")
+
+    await context.bot.send_message(chat_id=chat_id, text="\n".join(lines), parse_mode="Markdown")
+    logger.info(f"Sent height reminder for {len(plants)} plants → DM {chat_id}")
