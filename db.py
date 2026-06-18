@@ -1,5 +1,6 @@
 import aiosqlite
 import math
+import os
 from datetime import datetime, date
 from typing import Optional
 
@@ -35,6 +36,7 @@ async def init_db():
                 height_cm               REAL,
                 sunlight_hours_actual   REAL,
                 sunlight_hours_needed   REAL,
+                user_id                 INTEGER,
                 watering_frequency_days INTEGER NOT NULL DEFAULT 7,
                 watering_amount_ml      INTEGER NOT NULL DEFAULT 200,
                 notes                   TEXT,
@@ -97,19 +99,27 @@ async def init_db():
             "ALTER TABLE plants ADD COLUMN height_cm REAL",
             "ALTER TABLE plants ADD COLUMN sunlight_hours_actual REAL",
             "ALTER TABLE plants ADD COLUMN sunlight_hours_needed REAL",
+            "ALTER TABLE plants ADD COLUMN user_id INTEGER",
         ):
             try:
                 await db.execute(column_sql)
                 await db.commit()
             except Exception:
                 pass  # column already exists
+        # Backfill user_id for plants that pre-date multi-user support
+        owner_id = os.getenv("OWNER_CHAT_ID")
+        if owner_id:
+            await db.execute(
+                "UPDATE plants SET user_id = ? WHERE user_id IS NULL", (int(owner_id),)
+            )
+            await db.commit()
 
 
 async def add_plant(
     name, plant_type, pot_depth_cm, pot_width_cm, location, soil_alkalinity,
     soil_type, fertilizer_type, fertilizer_amount, fertilizer_frequency_days,
     facing, height_cm, sunlight_hours_actual, sunlight_hours_needed,
-    watering_frequency_days, watering_amount_ml,
+    watering_frequency_days, watering_amount_ml, user_id=None,
 ) -> int:
     soil_volume_l = estimate_soil_volume_l(pot_depth_cm, pot_width_cm) if location == "pot" else None
     async with aiosqlite.connect(DB_PATH) as db:
@@ -119,14 +129,14 @@ async def add_plant(
                    soil_alkalinity, soil_type, soil_volume_l, fertilizer_type,
                    fertilizer_amount, fertilizer_frequency_days, facing, height_cm,
                    sunlight_hours_actual, sunlight_hours_needed,
-                   watering_frequency_days, watering_amount_ml
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   watering_frequency_days, watering_amount_ml, user_id
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 name, plant_type, pot_depth_cm, pot_width_cm, location,
                 soil_alkalinity, soil_type, soil_volume_l, fertilizer_type,
                 fertilizer_amount, fertilizer_frequency_days, facing, height_cm,
                 sunlight_hours_actual, sunlight_hours_needed,
-                watering_frequency_days, watering_amount_ml,
+                watering_frequency_days, watering_amount_ml, user_id,
             ),
         )
         await db.commit()
@@ -139,10 +149,15 @@ async def add_plant(
         return cursor.lastrowid
 
 
-async def get_all_plants():
+async def get_all_plants(user_id=None):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        cursor = await db.execute("SELECT * FROM plants ORDER BY name")
+        if user_id is not None:
+            cursor = await db.execute(
+                "SELECT * FROM plants WHERE user_id = ? ORDER BY name", (user_id,)
+            )
+        else:
+            cursor = await db.execute("SELECT * FROM plants ORDER BY name")
         return await cursor.fetchall()
 
 
@@ -153,12 +168,18 @@ async def get_plant(plant_id: int):
         return await cursor.fetchone()
 
 
-async def get_plant_by_name(name: str):
+async def get_plant_by_name(name: str, user_id=None):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        cursor = await db.execute(
-            "SELECT * FROM plants WHERE LOWER(name) = LOWER(?)", (name,)
-        )
+        if user_id is not None:
+            cursor = await db.execute(
+                "SELECT * FROM plants WHERE LOWER(name) = LOWER(?) AND user_id = ?",
+                (name, user_id),
+            )
+        else:
+            cursor = await db.execute(
+                "SELECT * FROM plants WHERE LOWER(name) = LOWER(?)", (name,)
+            )
         return await cursor.fetchone()
 
 
@@ -252,6 +273,21 @@ async def get_plants_needing_water():
             HAVING last_watered IS NULL
                OR julianday('now') - julianday(last_watered) >= p.watering_frequency_days
         """)
+        return await cursor.fetchall()
+
+
+async def get_plants_needing_water_for_user(user_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("""
+            SELECT p.*, MAX(wh.watered_at) AS last_watered
+            FROM plants p
+            LEFT JOIN watering_history wh ON p.id = wh.plant_id
+            WHERE p.user_id = ?
+            GROUP BY p.id
+            HAVING last_watered IS NULL
+               OR julianday('now') - julianday(last_watered) >= p.watering_frequency_days
+        """, (user_id,))
         return await cursor.fetchall()
 
 

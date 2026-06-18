@@ -18,8 +18,11 @@ def get_db():
 
 @app.route("/")
 def index():
+    owner_id = os.getenv("OWNER_CHAT_ID", "")
+    second_id = os.getenv("SECOND_USER_CHAT_ID", "")
+
     conn = get_db()
-    plants = conn.execute("""
+    rows = conn.execute("""
         SELECT p.*,
                MAX(wh.watered_at)    AS last_watered,
                COUNT(wh.id)          AS watering_count
@@ -29,6 +32,19 @@ def index():
         ORDER BY p.name
     """).fetchall()
     conn.close()
+
+    plants = []
+    for row in rows:
+        p = dict(row)
+        uid = str(p.get("user_id") or "")
+        if uid == owner_id:
+            p["user_label"] = "owner"
+        elif uid == second_id:
+            p["user_label"] = "guest"
+        else:
+            p["user_label"] = None
+        plants.append(p)
+
     return render_template("index.html", plants=plants)
 
 

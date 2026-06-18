@@ -9,6 +9,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 import db
 from ai import analyze_plant_health
+from i18n import t, lang_for, LOCATION_ALIASES, SKIP_WORDS, NONE_WORDS, UNSURE
 
 logger = logging.getLogger(__name__)
 
@@ -20,19 +21,23 @@ logger = logging.getLogger(__name__)
 ) = range(17)
 
 _FACING_NORMALIZE = {
-    "north": "north", "n": "north",
-    "south": "south", "s": "south",
-    "east": "east", "e": "east",
-    "west": "west", "w": "west",
-    "northeast": "northeast", "north east": "northeast", "ne": "northeast",
-    "northwest": "northwest", "north west": "northwest", "nw": "northwest",
-    "southeast": "southeast", "south east": "southeast", "se": "southeast",
-    "southwest": "southwest", "south west": "southwest", "sw": "southwest",
-    "no shade": "no shade", "noshade": "no shade", "full sun": "no shade", "none": "no shade",
+    "north": "north", "n": "north", "norte": "north",
+    "south": "south", "s": "south", "sur": "south",
+    "east": "east",  "e": "east",  "este": "east",
+    "west": "west",  "w": "west",  "oeste": "west",
+    "northeast": "northeast", "north east": "northeast", "ne": "northeast", "noreste": "northeast",
+    "northwest": "northwest", "north west": "northwest", "nw": "northwest", "noroeste": "northwest",
+    "southeast": "southeast", "south east": "southeast", "se": "southeast", "sureste": "southeast",
+    "southwest": "southwest", "south west": "southwest", "sw": "southwest", "suroeste": "southwest",
+    "no shade": "no shade", "noshade": "no shade", "full sun": "no shade",
+    "sin sombra": "no shade", "sol directo": "no shade",
 }
 
-# Flask server subprocess handle (module-level so it persists across calls)
 _flask_process: subprocess.Popen | None = None
+
+
+def _lang(update: Update) -> str:
+    return lang_for(update.effective_chat.id)
 
 
 def _get_local_ip() -> str:
@@ -55,7 +60,6 @@ def _get_tailscale_ip() -> str | None:
             return result.stdout.strip()
     except Exception:
         pass
-    # Fallback: look for a 100.x.x.x address on any interface
     try:
         for info in socket.getaddrinfo(socket.gethostname(), None):
             ip = info[4][0]
@@ -69,43 +73,9 @@ def _get_tailscale_ip() -> str | None:
 # ── Core commands ────────────────────────────────────────────────────────────
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = str(update.effective_chat.id)
-    await db.set_setting("owner_chat_id", chat_id)
-    await update.message.reply_text(
-        "🌱 *Plant Tracker*\n\n"
-        "/add — Onboard a new plant\n"
-        "/list — All plants & last watered\n"
-        "/water `<plant>` `[ml]` — Log a watering\n"
-        "/status `<plant>` — Watering history\n"
-        "/photo `<plant>` — Get plant photo\n"
-        "/health `<plant>` — AI health check\n"
-        "/height `<plant>` `<cm>` — Log a new height reading\n"
-        "/startserver — Start the plant dashboard\n"
-        "/stopserver — Stop the dashboard\n\n"
-        "Reply to any daily recommendation to log watering or update a photo.",
-        parse_mode="Markdown",
-    )
-
-
-async def settopic_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Run this from inside the plants forum topic to route all bot messages there."""
     chat_id = update.effective_chat.id
-    thread_id = update.message.message_thread_id if update.message else None
-
-    await db.set_setting("target_chat_id", str(chat_id))
-    if thread_id:
-        await db.set_setting("target_thread_id", str(thread_id))
-        await update.message.reply_text(
-            f"✅ Routing enabled!\nAll plant messages will come here.\n"
-            f"`chat_id={chat_id}` · `thread_id={thread_id}`",
-            parse_mode="Markdown",
-        )
-    else:
-        await db.set_setting("target_thread_id", "")
-        await update.message.reply_text(
-            f"✅ Routing enabled for this chat (`{chat_id}`).",
-            parse_mode="Markdown",
-        )
+    await db.set_setting("owner_chat_id", str(chat_id))
+    await update.message.reply_text(t("start_help", _lang(update)), parse_mode="Markdown")
 
 
 async def startserver_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -116,14 +86,9 @@ async def startserver_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     port = int(os.getenv("PORT_PLANTS", os.getenv("FLASK_PORT", 5060)))
     web_py = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web.py")
-
-    _flask_process = subprocess.Popen(
-        [sys.executable, web_py],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
-    await asyncio.sleep(1.5)  # give Flask a moment to bind
+    _flask_process = subprocess.Popen([sys.executable, web_py],
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    await asyncio.sleep(1.5)
 
     if _flask_process.poll() is not None:
         await update.message.reply_text("❌ Server failed to start. Check the logs on the machine.")
@@ -132,13 +97,10 @@ async def startserver_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     local_ip = _get_local_ip()
     tailscale_ip = _get_tailscale_ip()
-
-    lines = [f"🌐 *Plant dashboard started!*\n"]
-    lines.append(f"🏠 WiFi: `http://{local_ip}:{port}`")
+    lines = ["🌐 *Plant dashboard started!*\n", f"🏠 WiFi: `http://{local_ip}:{port}`"]
     if tailscale_ip:
         lines.append(f"🔒 Tailscale: `http://{tailscale_ip}:{port}`")
-    lines.append(f"\n🛑 To stop: /stopserver")
-
+    lines.append("\n🛑 To stop: /stopserver")
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
@@ -148,7 +110,6 @@ async def stopserver_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("ℹ️ Server is not running.")
         _flask_process = None
         return
-
     _flask_process.terminate()
     try:
         _flask_process.wait(timeout=5)
@@ -159,33 +120,34 @@ async def stopserver_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def list_plants(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    plants = await db.get_all_plants()
+    lang = _lang(update)
+    uid = update.effective_chat.id
+    plants = await db.get_all_plants(user_id=uid)
     if not plants:
-        await update.message.reply_text("No plants yet — use /add to get started.")
+        await update.message.reply_text(t("no_plants", lang))
         return
 
-    lines = ["🌿 *Your Plants*\n"]
+    lines = [t("list_header", lang)]
     for p in plants:
         last = await db.get_last_watered(p["id"])
         if last:
             from datetime import datetime
             days = (datetime.now() - datetime.fromisoformat(last[0])).days
-            last_str = "today" if days == 0 else f"{days}d ago"
+            last_str = t("daily_today", lang) if days == 0 else f"{days}d"
         else:
-            last_str = "never"
-        photo_icon = "📷 " if p["telegram_file_id"] or p["image_data"] else ""
-        lines.append(
-            f"{photo_icon}• *{p['name']}* ({p['plant_type'] or '?'}) — last watered: {last_str}"
-        )
+            last_str = t("daily_never", lang)
+        icon = "📷 " if p["telegram_file_id"] or p["image_data"] else ""
+        lines.append(t("list_row", lang, icon=icon, name=p["name"],
+                       ptype=p["plant_type"] or "?", last=last_str))
 
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
 async def water_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = _lang(update)
+    uid = update.effective_chat.id
     if not context.args:
-        await update.message.reply_text(
-            "Usage: `/water <plant name> [ml]`", parse_mode="Markdown"
-        )
+        await update.message.reply_text(t("water_usage", lang), parse_mode="Markdown")
         return
 
     args = context.args
@@ -196,109 +158,104 @@ async def water_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         plant_name = " ".join(args)
 
-    plant = await db.get_plant_by_name(plant_name)
+    plant = await db.get_plant_by_name(plant_name, user_id=uid)
     if not plant:
-        await update.message.reply_text(f"Plant '{plant_name}' not found. Use /list to see all plants.")
+        await update.message.reply_text(t("plant_not_found", lang))
         return
 
     if amount_ml is None:
         amount_ml = plant["watering_amount_ml"]
 
     await db.log_watering(plant["id"], amount_ml)
-    await update.message.reply_text(
-        f"✅ Logged *{amount_ml} ml* for *{plant['name']}*", parse_mode="Markdown"
-    )
+    await update.message.reply_text(t("water_logged", lang, ml=amount_ml, name=plant["name"]),
+                                    parse_mode="Markdown")
 
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = _lang(update)
+    uid = update.effective_chat.id
     if not context.args:
-        await update.message.reply_text(
-            "Usage: `/status <plant name>`", parse_mode="Markdown"
-        )
+        await update.message.reply_text(t("status_usage", lang), parse_mode="Markdown")
         return
 
-    plant = await db.get_plant_by_name(" ".join(context.args))
+    plant = await db.get_plant_by_name(" ".join(context.args), user_id=uid)
     if not plant:
-        await update.message.reply_text("Plant not found. Use /list to see all plants.")
+        await update.message.reply_text(t("plant_not_found", lang))
         return
 
     history = await db.get_watering_history(plant["id"], limit=10)
 
     if plant["fertilizer_type"]:
-        fert_line = plant["fertilizer_type"]
-        if plant["fertilizer_amount"]:
-            fert_line += f", {plant['fertilizer_amount']}"
-        if plant["fertilizer_frequency_days"]:
-            fert_line += f", every {plant['fertilizer_frequency_days']} days"
+        fert_line = t("status_fert", lang,
+                      type=plant["fertilizer_type"],
+                      amount=plant["fertilizer_amount"] or "?",
+                      freq=plant["fertilizer_frequency_days"] or "?")
     else:
-        fert_line = "none"
+        fert_line = t("status_no_fert", lang)
 
     lines = [
         f"🌿 *{plant['name']}*",
-        f"Type: {plant['plant_type'] or 'Unknown'}",
+        f"Type: {plant['plant_type'] or '?'}",
         f"Location: {plant['location'] or '?'}",
-        f"Pot depth: {plant['pot_depth_cm'] or '?'} cm",
-        f"Pot width: {plant['pot_width_cm'] or '?'} cm",
+        f"Pot: {plant['pot_depth_cm'] or '?'} cm deep × {plant['pot_width_cm'] or '?'} cm wide",
         f"Soil volume: {plant['soil_volume_l'] or '?'} L",
         f"Soil: {plant['soil_alkalinity'] or '?'}, {plant['soil_type'] or '?'}",
         f"Fertilizer: {fert_line}",
         f"Facing: {plant['facing'] or '?'}",
         f"Height: {plant['height_cm'] or '?'} cm",
-        f"Watering frequency: every {plant['watering_frequency_days']} days",
-        f"Amount per session: {plant['watering_amount_ml']} ml\n",
+        f"Sun: {plant['sunlight_hours_actual'] or '?'}h / {plant['sunlight_hours_needed'] or '?'}h needed",
+        f"Watering: every {plant['watering_frequency_days']} days, {plant['watering_amount_ml']} ml\n",
         "💧 *Recent waterings:*",
     ]
     if history:
         for h in history:
             lines.append(f"  • {h['watered_at'][:16]} — {h['amount_ml']} ml")
     else:
-        lines.append("  No history yet.")
+        lines.append(f"  {t('status_no_hist', lang)}")
 
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
 async def photo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = _lang(update)
+    uid = update.effective_chat.id
     if not context.args:
-        await update.message.reply_text(
-            "Usage: `/photo <plant name>`", parse_mode="Markdown"
-        )
+        await update.message.reply_text(t("photo_usage", lang), parse_mode="Markdown")
         return
 
-    plant = await db.get_plant_by_name(" ".join(context.args))
+    plant = await db.get_plant_by_name(" ".join(context.args), user_id=uid)
     if not plant:
-        await update.message.reply_text("Plant not found. Use /list to see all plants.")
+        await update.message.reply_text(t("plant_not_found", lang))
         return
 
     if not plant["telegram_file_id"] and not plant["image_data"]:
-        await update.message.reply_text(
-            f"No photo stored for *{plant['name']}*. Send a photo as a reply to any recommendation.",
-            parse_mode="Markdown",
-        )
+        await update.message.reply_text(t("photo_none", lang, name=plant["name"]),
+                                        parse_mode="Markdown")
         return
 
     caption = f"📷 *{plant['name']}*"
     if plant["telegram_file_id"]:
-        await update.message.reply_photo(
-            photo=plant["telegram_file_id"], caption=caption, parse_mode="Markdown"
-        )
+        await update.message.reply_photo(photo=plant["telegram_file_id"],
+                                         caption=caption, parse_mode="Markdown")
     else:
-        await update.message.reply_photo(
-            photo=plant["image_data"], caption=caption, parse_mode="Markdown"
-        )
+        await update.message.reply_photo(photo=plant["image_data"],
+                                         caption=caption, parse_mode="Markdown")
 
 
 async def health_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = _lang(update)
+    uid = update.effective_chat.id
     if context.args:
-        plant = await db.get_plant_by_name(" ".join(context.args))
+        plant = await db.get_plant_by_name(" ".join(context.args), user_id=uid)
         if not plant:
-            await update.message.reply_text("Plant not found. Use /list to see all plants.")
+            await update.message.reply_text(t("plant_not_found", lang))
             return
-        await _run_health_check(update.effective_chat.id, dict(plant), context)
+        await _run_health_check(uid, dict(plant), context, lang)
         return
 
-    plants = await db.get_all_plants()
+    plants = await db.get_all_plants(user_id=uid)
     if not plants:
-        await update.message.reply_text("No plants yet — use /add to get started.")
+        await update.message.reply_text(t("no_plants", lang))
         return
 
     keyboard, row = [], []
@@ -310,304 +267,273 @@ async def health_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if row:
         keyboard.append(row)
 
-    await update.message.reply_text(
-        "Which plant would you like to analyze?",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-    )
+    await update.message.reply_text(t("health_pick", lang),
+                                    reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def health_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    lang = lang_for(update.effective_chat.id)
     plant_id = int(query.data.split(":")[1])
     plant = await db.get_plant(plant_id)
     if not plant:
         await query.edit_message_text("Plant not found.")
         return
     await query.edit_message_text(f"Analyzing *{plant['name']}*…", parse_mode="Markdown")
-    await _run_health_check(update.effective_chat.id, dict(plant), context)
+    await _run_health_check(update.effective_chat.id, dict(plant), context, lang)
 
 
-async def _run_health_check(chat_id: int, plant: dict, context: ContextTypes.DEFAULT_TYPE):
+async def _run_health_check(chat_id: int, plant: dict, context: ContextTypes.DEFAULT_TYPE, lang: str = "en"):
     history = await db.get_watering_history(plant["id"], limit=10)
     plant["history"] = [dict(h) for h in history]
-    image_data = plant.get("image_data")
-
     await context.bot.send_chat_action(chat_id=chat_id, action="typing")
-    response = await analyze_plant_health(plant, image_data)
-
+    response = await analyze_plant_health(plant, plant.get("image_data"))
     await context.bot.send_message(
         chat_id=chat_id,
-        text=f"🔬 *Health check — {plant['name']}*\n\n{response}",
+        text=t("health_header", lang, name=plant["name"], response=response),
         parse_mode="Markdown",
     )
+
+
+async def height_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = _lang(update)
+    uid = update.effective_chat.id
+    if len(context.args) < 2 or not context.args[-1].replace(".", "", 1).isdigit():
+        await update.message.reply_text(t("height_usage", lang), parse_mode="Markdown")
+        return
+
+    height_cm = float(context.args[-1])
+    plant = await db.get_plant_by_name(" ".join(context.args[:-1]), user_id=uid)
+    if not plant:
+        await update.message.reply_text(t("plant_not_found", lang))
+        return
+
+    await db.log_height(plant["id"], height_cm)
+    await update.message.reply_text(t("height_logged", lang, cm=height_cm, name=plant["name"]),
+                                    parse_mode="Markdown")
 
 
 # ── Reply handlers ───────────────────────────────────────────────────────────
 
 async def handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Parse a text reply to a plant recommendation and log watering."""
     if not update.message.reply_to_message:
         return
-
+    lang = _lang(update)
     chat_id = update.effective_chat.id
-    replied_id = update.message.reply_to_message.message_id
-    plant = await db.get_plant_by_message(chat_id, replied_id)
+    plant = await db.get_plant_by_message(chat_id, update.message.reply_to_message.message_id)
     if not plant:
         return
 
     text = update.message.text.strip().lower()
-    if text in ("skip", "s", "no", "later", "x"):
-        await update.message.reply_text(
-            f"Skipped — *{plant['name']}* not watered today.", parse_mode="Markdown"
-        )
+    if text in ("skip", "s", "no", "later", "x", "omitir"):
+        await update.message.reply_text(t("water_skipped", lang, name=plant["name"]),
+                                        parse_mode="Markdown")
         return
 
     match = re.search(r"(\d+)", text)
     amount_ml = int(match.group(1)) if match else plant["watering_amount_ml"]
-
     await db.log_watering(plant["id"], amount_ml)
-    await update.message.reply_text(
-        f"✅ Logged *{amount_ml} ml* for *{plant['name']}*", parse_mode="Markdown"
-    )
+    await update.message.reply_text(t("water_logged", lang, ml=amount_ml, name=plant["name"]),
+                                    parse_mode="Markdown")
 
 
 async def handle_photo_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Store a photo sent as a reply to a plant recommendation."""
     if not update.message.reply_to_message:
         return
-
     chat_id = update.effective_chat.id
-    replied_id = update.message.reply_to_message.message_id
-    plant = await db.get_plant_by_message(chat_id, replied_id)
+    plant = await db.get_plant_by_message(chat_id, update.message.reply_to_message.message_id)
     if not plant:
         return
 
     photo = update.message.photo[-1]
     file_obj = await context.bot.get_file(photo.file_id)
     image_bytes = await file_obj.download_as_bytearray()
-
     await db.update_plant_image(plant["id"], bytes(image_bytes), photo.file_id)
-    await update.message.reply_text(
-        f"📷 Photo updated for *{plant['name']}*!", parse_mode="Markdown"
-    )
+    await update.message.reply_text(f"📷 *{plant['name']}* ✅", parse_mode="Markdown")
 
 
 # ── Onboarding conversation ──────────────────────────────────────────────────
 
 async def onboard_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
-    await update.message.reply_text(
-        "🌱 *Add a new plant*\n\nWhat's the plant's name?",
-        parse_mode="Markdown",
-    )
+    context.user_data["_lang"] = _lang(update)
+    context.user_data["_uid"] = update.effective_chat.id
+    await update.message.reply_text(t("ob_start", context.user_data["_lang"]), parse_mode="Markdown")
     return NAME
 
 
+def _l(context) -> str:
+    return context.user_data.get("_lang", "en")
+
+
 async def onboard_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = _l(context)
     name = update.message.text.strip()
     if await db.get_plant_by_name(name):
-        await update.message.reply_text(
-            f"A plant named *{name}* already exists. Try a different name.",
-            parse_mode="Markdown",
-        )
+        await update.message.reply_text(t("ob_name_dup", lang, name=name), parse_mode="Markdown")
         return NAME
     context.user_data["name"] = name
-    await update.message.reply_text(
-        f"What *type* of plant is *{name}*?\n(e.g. succulent, fern, tomato, cactus)",
-        parse_mode="Markdown",
-    )
+    await update.message.reply_text(t("ob_type", lang, name=name), parse_mode="Markdown")
     return PLANT_TYPE
 
 
 async def onboard_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["plant_type"] = update.message.text.strip()
-    await update.message.reply_text(
-        "Is it planted in a *pot* or in the *ground*?", parse_mode="Markdown"
-    )
+    await update.message.reply_text(t("ob_location", _l(context)), parse_mode="Markdown")
     return LOCATION
 
 
 async def onboard_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = _l(context)
     text = update.message.text.strip().lower()
-    if text not in ("pot", "ground"):
-        await update.message.reply_text("Please answer `pot` or `ground`.", parse_mode="Markdown")
+    canonical = LOCATION_ALIASES.get(text)
+    if not canonical:
+        await update.message.reply_text(t("ob_location_invalid", lang), parse_mode="Markdown")
         return LOCATION
-    context.user_data["location"] = text
+    context.user_data["location"] = canonical
 
-    if text == "ground":
+    if canonical == "ground":
         context.user_data["pot_depth_cm"] = None
         context.user_data["pot_width_cm"] = None
-        await update.message.reply_text(
-            "What's the soil alkalinity? (e.g. `acidic`, `neutral`, `alkaline`, or a pH like `6.5`) — or `?` to skip.",
-            parse_mode="Markdown",
-        )
+        await update.message.reply_text(t("ob_soil_alk", lang), parse_mode="Markdown")
         return SOIL_ALKALINITY
 
-    await update.message.reply_text("How deep is the pot? (cm, e.g. `15`)", parse_mode="Markdown")
+    await update.message.reply_text(t("ob_pot_depth", lang), parse_mode="Markdown")
     return POT_DEPTH
 
 
 async def onboard_pot_depth(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = _l(context)
     text = update.message.text.strip().lower()
-    if text in ("?", "idk", "skip", "unknown"):
+    if text in SKIP_WORDS:
         context.user_data["pot_depth_cm"] = None
     else:
         try:
             context.user_data["pot_depth_cm"] = float(text)
         except ValueError:
-            await update.message.reply_text("Enter a number in cm (e.g. `20`) or `?` to skip.", parse_mode="Markdown")
+            await update.message.reply_text(t("ob_pot_depth_invalid", lang), parse_mode="Markdown")
             return POT_DEPTH
-    await update.message.reply_text("How *wide* is the pot? (cm, e.g. `25`) — or `?` to skip.", parse_mode="Markdown")
+    await update.message.reply_text(t("ob_pot_width", lang), parse_mode="Markdown")
     return POT_WIDTH
 
 
 async def onboard_pot_width(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = _l(context)
     text = update.message.text.strip().lower()
-    if text in ("?", "idk", "skip", "unknown"):
+    if text in SKIP_WORDS:
         context.user_data["pot_width_cm"] = None
     else:
         try:
             context.user_data["pot_width_cm"] = float(text)
         except ValueError:
-            await update.message.reply_text("Enter a number in cm (e.g. `25`) or `?` to skip.", parse_mode="Markdown")
+            await update.message.reply_text(t("ob_pot_width_invalid", lang), parse_mode="Markdown")
             return POT_WIDTH
-    await update.message.reply_text(
-        "What's the soil alkalinity? (e.g. `acidic`, `neutral`, `alkaline`, or a pH like `6.5`) — or `?` to skip.",
-        parse_mode="Markdown",
-    )
+    await update.message.reply_text(t("ob_soil_alk", lang), parse_mode="Markdown")
     return SOIL_ALKALINITY
 
 
 async def onboard_soil_alkalinity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-    context.user_data["soil_alkalinity"] = None if text.lower() in ("?", "idk", "skip", "unknown") else text
-    await update.message.reply_text(
-        "What soil type? (e.g. `potting mix`, `clay`, `sandy`, `loam`) — or `?` to skip.",
-        parse_mode="Markdown",
-    )
+    context.user_data["soil_alkalinity"] = None if text.lower() in SKIP_WORDS else text
+    await update.message.reply_text(t("ob_soil_type", _l(context)), parse_mode="Markdown")
     return SOIL_TYPE
 
 
 async def onboard_soil_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-    context.user_data["soil_type"] = None if text.lower() in ("?", "idk", "skip", "unknown") else text
-    await update.message.reply_text(
-        "What *type* of fertilizer do you use, if any? (e.g. `fish emulsion`, `10-10-10`) — or `none`/`?` to skip.",
-        parse_mode="Markdown",
-    )
+    context.user_data["soil_type"] = None if text.lower() in SKIP_WORDS else text
+    await update.message.reply_text(t("ob_fert_type", _l(context)), parse_mode="Markdown")
     return FERTILIZER_TYPE
 
 
-_NONE_WORDS = ("?", "idk", "skip", "unknown", "none")
-
-
 async def onboard_fertilizer_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = _l(context)
     text = update.message.text.strip()
-    if text.lower() in _NONE_WORDS:
+    if text.lower() in NONE_WORDS:
         context.user_data["fertilizer_type"] = None
         context.user_data["fertilizer_amount"] = None
         context.user_data["fertilizer_frequency_days"] = None
-        await update.message.reply_text(
-            "Which way does it face — `north`, `south`, `east`, `west`, or `no shade`? — or `?` to skip.",
-            parse_mode="Markdown",
-        )
+        await update.message.reply_text(t("ob_facing", lang), parse_mode="Markdown")
         return FACING
-
     context.user_data["fertilizer_type"] = text
-    await update.message.reply_text(
-        "How much fertilizer per application? (e.g. `1 tbsp`, `10 ml`) — or `?` to skip.",
-        parse_mode="Markdown",
-    )
+    await update.message.reply_text(t("ob_fert_amount", lang), parse_mode="Markdown")
     return FERTILIZER_AMOUNT
 
 
 async def onboard_fertilizer_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-    context.user_data["fertilizer_amount"] = None if text.lower() in _NONE_WORDS else text
-    await update.message.reply_text(
-        "How often do you fertilize? (days, e.g. `30`) — or `?` to skip.",
-        parse_mode="Markdown",
-    )
+    context.user_data["fertilizer_amount"] = None if text.lower() in NONE_WORDS else text
+    await update.message.reply_text(t("ob_fert_freq", _l(context)), parse_mode="Markdown")
     return FERTILIZER_FREQUENCY
 
 
 async def onboard_fertilizer_frequency(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = _l(context)
     text = update.message.text.strip().lower()
-    if text in _NONE_WORDS:
+    if text in NONE_WORDS:
         context.user_data["fertilizer_frequency_days"] = None
     else:
         try:
             context.user_data["fertilizer_frequency_days"] = int(text)
         except ValueError:
-            await update.message.reply_text(
-                "Enter a whole number of days (e.g. `30`) or `?` to skip.", parse_mode="Markdown"
-            )
+            await update.message.reply_text(t("ob_fert_freq_invalid", lang), parse_mode="Markdown")
             return FERTILIZER_FREQUENCY
-    await update.message.reply_text(
-        "Which way does it face — `north`, `south`, `east`, `west`, or `no shade`? — or `?` to skip.",
-        parse_mode="Markdown",
-    )
+    await update.message.reply_text(t("ob_facing", lang), parse_mode="Markdown")
     return FACING
 
 
 async def onboard_facing(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = _l(context)
     text = update.message.text.strip().lower()
-    if text in ("?", "idk", "skip", "unknown"):
+    if text in SKIP_WORDS:
         context.user_data["facing"] = None
     elif text in _FACING_NORMALIZE:
         context.user_data["facing"] = _FACING_NORMALIZE[text]
     else:
-        await update.message.reply_text(
-            "Please answer a compass direction (e.g. `north`, `southwest`, `NW`) or `no shade`, or `?` to skip.",
-            parse_mode="Markdown",
-        )
+        await update.message.reply_text(t("ob_facing_invalid", lang), parse_mode="Markdown")
         return FACING
-    await update.message.reply_text(
-        "How tall is the plant today? (cm, e.g. `30`) — or `?` to skip.", parse_mode="Markdown"
-    )
+    await update.message.reply_text(t("ob_height", lang), parse_mode="Markdown")
     return HEIGHT
 
 
 async def onboard_height(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = _l(context)
     text = update.message.text.strip().lower()
-    if text in ("?", "idk", "skip", "unknown"):
+    if text in SKIP_WORDS:
         context.user_data["height_cm"] = None
     else:
         try:
             context.user_data["height_cm"] = float(text)
         except ValueError:
-            await update.message.reply_text("Enter a number in cm (e.g. `30`) or `?` to skip.", parse_mode="Markdown")
+            await update.message.reply_text(t("ob_height_invalid", lang), parse_mode="Markdown")
             return HEIGHT
-    await update.message.reply_text(
-        "How many hours of *direct sunlight* does it get per day? (e.g. `4`) — or `?` to skip.",
-        parse_mode="Markdown",
-    )
+    await update.message.reply_text(t("ob_sun_actual", lang), parse_mode="Markdown")
     return SUNLIGHT_ACTUAL
 
 
 async def onboard_sunlight_actual(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = _l(context)
     text = update.message.text.strip().lower()
-    if text in ("?", "idk", "skip", "unknown"):
+    if text in SKIP_WORDS:
         context.user_data["sunlight_hours_actual"] = None
     else:
         try:
             context.user_data["sunlight_hours_actual"] = float(text)
         except ValueError:
-            await update.message.reply_text("Enter a number (e.g. `4`) or `?` to skip.", parse_mode="Markdown")
+            await update.message.reply_text(t("ob_sun_actual_invalid", lang), parse_mode="Markdown")
             return SUNLIGHT_ACTUAL
-    await update.message.reply_text(
-        "How many hours of sunlight does it *need*? (e.g. `6`) — or `?` for a suggestion.",
-        parse_mode="Markdown",
-    )
+    await update.message.reply_text(t("ob_sun_needed", lang), parse_mode="Markdown")
     return SUNLIGHT_NEEDED
 
 
 async def onboard_sunlight_needed(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from ai import suggest_sunlight_needs
+    lang = _l(context)
     text = update.message.text.strip().lower()
-    if text in _UNSURE:
-        await update.message.reply_text("🔍 Looking up sunlight requirements…")
+
+    if text in UNSURE:
+        await update.message.reply_text(t("ob_sun_looking_up", lang))
         try:
             rec = await suggest_sunlight_needs(
                 context.user_data["name"],
@@ -621,44 +547,36 @@ async def onboard_sunlight_needed(update: Update, context: ContextTypes.DEFAULT_
             if actual is not None:
                 diff = rec["hours_needed"] - actual
                 if diff > 0.5:
-                    gap = f"\n⚠️ Currently getting {actual}h — needs {diff:.1f}h more."
+                    gap = t("ob_sun_gap_more", lang, actual=actual, diff=diff)
                 elif diff < -0.5:
-                    gap = f"\n✅ Getting {actual}h — more than enough."
+                    gap = t("ob_sun_gap_ok", lang, actual=actual)
             await update.message.reply_text(
-                f"☀️ *{context.user_data['plant_type']}* needs ~*{rec['hours_needed']}h* of direct sun.{note}{gap}\n\n"
-                "How often does it need watering? (days, e.g. `7`) — or `?` for a suggestion.",
+                t("ob_sun_result", lang, plant_type=context.user_data["plant_type"],
+                  hours=rec["hours_needed"], note=note, gap=gap),
                 parse_mode="Markdown",
             )
         except Exception as e:
             logger.error(f"Sunlight lookup failed: {e}")
             context.user_data["sunlight_hours_needed"] = None
-            await update.message.reply_text(
-                "Couldn't reach the AI. How often does it need watering? (days, e.g. `7`)",
-                parse_mode="Markdown",
-            )
+            await update.message.reply_text(t("ob_sun_failed", lang), parse_mode="Markdown")
         return FREQUENCY
 
     try:
         context.user_data["sunlight_hours_needed"] = float(text)
     except ValueError:
-        await update.message.reply_text("Enter a number (e.g. `6`) or `?` for a suggestion.", parse_mode="Markdown")
+        await update.message.reply_text(t("ob_sun_invalid", lang), parse_mode="Markdown")
         return SUNLIGHT_NEEDED
-    await update.message.reply_text(
-        "How often does it need watering? (days, e.g. `7`) — or `?` for a suggestion.",
-        parse_mode="Markdown",
-    )
+    await update.message.reply_text(t("ob_freq", lang), parse_mode="Markdown")
     return FREQUENCY
-
-
-_UNSURE = {"?", "idk", "i don't know", "not sure", "unsure", "unknown", "help", "idc"}
 
 
 async def onboard_frequency(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from ai import suggest_watering_schedule
+    lang = _l(context)
     text = update.message.text.strip().lower()
 
-    if text in _UNSURE:
-        await update.message.reply_text("🔍 Looking up care requirements for your plant…")
+    if text in UNSURE:
+        await update.message.reply_text(t("ob_freq_looking_up", lang))
         try:
             rec = await suggest_watering_schedule(
                 context.user_data["name"],
@@ -669,42 +587,32 @@ async def onboard_frequency(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["watering_amount_ml"] = rec["amount_ml"]
             note = f"\n_{rec['note']}_" if rec.get("note") else ""
             await update.message.reply_text(
-                f"✅ Recommendation for *{context.user_data['plant_type']}*:\n"
-                f"• Every *{rec['frequency_days']} days*\n"
-                f"• *{rec['amount_ml']} ml* per session{note}\n\n"
-                "Both saved! Last step: send a *photo* or type `skip`.",
+                t("ob_freq_result", lang, plant_type=context.user_data["plant_type"],
+                  freq=rec["frequency_days"], ml=rec["amount_ml"], note=note),
                 parse_mode="Markdown",
             )
-            return PHOTO  # skip AMOUNT — both values are filled
+            return PHOTO
         except Exception as e:
             logger.error(f"Schedule lookup failed: {e}")
-            await update.message.reply_text(
-                "Couldn't reach the AI right now. Enter frequency in days (e.g. `7`):",
-                parse_mode="Markdown",
-            )
+            await update.message.reply_text(t("ob_freq_failed", lang), parse_mode="Markdown")
             return FREQUENCY
 
     try:
         context.user_data["watering_frequency_days"] = int(text)
     except ValueError:
-        await update.message.reply_text(
-            "Enter a whole number of days (e.g. `7`), or `?` for a recommendation.",
-            parse_mode="Markdown",
-        )
+        await update.message.reply_text(t("ob_freq_invalid", lang), parse_mode="Markdown")
         return FREQUENCY
-    await update.message.reply_text(
-        "How much water per session? (ml, e.g. `200`) — or `?` for a suggestion.",
-        parse_mode="Markdown",
-    )
+    await update.message.reply_text(t("ob_amount", lang), parse_mode="Markdown")
     return AMOUNT
 
 
 async def onboard_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from ai import suggest_watering_schedule
+    lang = _l(context)
     text = update.message.text.strip().lower()
 
-    if text in _UNSURE:
-        await update.message.reply_text("🔍 Looking up a recommendation…")
+    if text in UNSURE:
+        await update.message.reply_text(t("ob_amount_looking_up", lang))
         try:
             rec = await suggest_watering_schedule(
                 context.user_data["name"],
@@ -713,35 +621,27 @@ async def onboard_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             context.user_data["watering_amount_ml"] = rec["amount_ml"]
             await update.message.reply_text(
-                f"✅ Suggested *{rec['amount_ml']} ml* per session for a {context.user_data['plant_type']}. Saved!\n\n"
-                "Last step: send a *photo* or type `skip`.",
+                t("ob_amount_result", lang, ml=rec["amount_ml"],
+                  plant_type=context.user_data["plant_type"]),
                 parse_mode="Markdown",
             )
             return PHOTO
         except Exception as e:
             logger.error(f"Amount lookup failed: {e}")
-            await update.message.reply_text(
-                "Couldn't reach the AI right now. Enter the amount in ml (e.g. `200`):",
-                parse_mode="Markdown",
-            )
+            await update.message.reply_text(t("ob_amount_failed", lang), parse_mode="Markdown")
             return AMOUNT
 
     try:
         context.user_data["watering_amount_ml"] = int(text)
     except ValueError:
-        await update.message.reply_text(
-            "Enter a whole number in ml (e.g. `200`) or `?` for a suggestion.",
-            parse_mode="Markdown",
-        )
+        await update.message.reply_text(t("ob_amount_invalid", lang), parse_mode="Markdown")
         return AMOUNT
-    await update.message.reply_text(
-        "Last step: send a *photo* of the plant, or type `skip` to add it later.",
-        parse_mode="Markdown",
-    )
+    await update.message.reply_text(t("ob_photo", lang), parse_mode="Markdown")
     return PHOTO
 
 
 async def onboard_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = _l(context)
     data = context.user_data
     image_data, file_id = None, None
 
@@ -768,74 +668,52 @@ async def onboard_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sunlight_hours_needed=data.get("sunlight_hours_needed"),
         watering_frequency_days=data["watering_frequency_days"],
         watering_amount_ml=data["watering_amount_ml"],
+        user_id=data.get("_uid"),
     )
 
     if image_data:
         await db.update_plant_image(plant_id, image_data, file_id)
 
-    context.user_data.clear()
-
     if data.get("location") == "pot":
         depth = f"{data.get('pot_depth_cm')} cm" if data.get("pot_depth_cm") else "?"
         width = f"{data.get('pot_width_cm')} cm" if data.get("pot_width_cm") else "?"
-        location_line = f"Pot: {depth} deep × {width} wide"
         volume = db.estimate_soil_volume_l(data.get("pot_depth_cm"), data.get("pot_width_cm"))
-        if volume:
-            location_line += f" (~{volume} L soil)"
+        vol_str = f" (~{volume} L)" if volume else ""
+        location_line = t("location_pot", lang, depth=depth, width=width, vol=vol_str)
     else:
-        location_line = "Planted in the ground"
-
-    height_str = f"{data.get('height_cm')} cm" if data.get("height_cm") else "?"
+        location_line = t("location_ground", lang)
 
     if data.get("fertilizer_type"):
-        fert_line = data["fertilizer_type"]
+        fert = data["fertilizer_type"]
         if data.get("fertilizer_amount"):
-            fert_line += f", {data['fertilizer_amount']}"
+            fert += f", {data['fertilizer_amount']}"
         if data.get("fertilizer_frequency_days"):
-            fert_line += f", every {data['fertilizer_frequency_days']} days"
+            fert += f", every {data['fertilizer_frequency_days']} days"
     else:
-        fert_line = "none"
+        fert = t("status_no_fert", lang)
+
+    height_str = f"{data.get('height_cm')} cm" if data.get("height_cm") else "?"
+    context.user_data.clear()
 
     await update.message.reply_text(
-        f"✅ *{data['name']}* added!\n\n"
-        f"Type: {data['plant_type']}\n"
-        f"{location_line}\n"
-        f"Soil: {data.get('soil_alkalinity') or '?'}, {data.get('soil_type') or '?'}\n"
-        f"Fertilizer: {fert_line}\n"
-        f"Facing: {data.get('facing') or '?'}\n"
-        f"Height: {height_str}\n"
-        f"Waters every {data['watering_frequency_days']} days, {data['watering_amount_ml']} ml\n\n"
-        "Use /list to see all your plants. Use /height to update height anytime.",
+        t("ob_done", lang,
+          name=data["name"],
+          plant_type=data["plant_type"],
+          location_line=location_line,
+          soil_alk=data.get("soil_alkalinity") or "?",
+          soil_type=data.get("soil_type") or "?",
+          fert=fert,
+          facing=data.get("facing") or "?",
+          height=height_str,
+          freq=data["watering_frequency_days"],
+          ml=data["watering_amount_ml"]),
         parse_mode="Markdown",
     )
     return ConversationHandler.END
 
 
-# ── Height tracking ──────────────────────────────────────────────────────────
-
-async def height_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Usage: /height <plant name> <cm> — log a new height reading."""
-    if len(context.args) < 2 or not context.args[-1].replace(".", "", 1).isdigit():
-        await update.message.reply_text(
-            "Usage: `/height <plant name> <cm>`\ne.g. `/height Monstera 45`",
-            parse_mode="Markdown",
-        )
-        return
-
-    height_cm = float(context.args[-1])
-    plant_name = " ".join(context.args[:-1])
-    plant = await db.get_plant_by_name(plant_name)
-    if not plant:
-        await update.message.reply_text(f"Plant '{plant_name}' not found. Use /list to see all plants.")
-        return
-
-    await db.log_height(plant["id"], height_cm)
-    await update.message.reply_text(
-        f"📏 Logged *{height_cm} cm* for *{plant['name']}*", parse_mode="Markdown"
-    )
-
-
 async def onboard_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = _l(context)
     context.user_data.clear()
-    await update.message.reply_text("Cancelled. Use /add to start over.")
+    await update.message.reply_text(t("ob_cancel", lang))
     return ConversationHandler.END

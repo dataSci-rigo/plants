@@ -32,6 +32,16 @@
       <h2 class="font-semibold text-gray-900 text-base leading-tight">{{ p.name }}</h2>
       <p class="text-sm text-gray-500">{{ p.plant_type or "Unknown type" }}</p>
 
+      {% if p.user_label %}
+      <div class="pt-1">
+        {% if p.user_label == "owner" %}
+          <span class="text-xs bg-blue-50 text-blue-600 font-medium px-2 py-0.5 rounded-full">owner</span>
+        {% elif p.user_label == "guest" %}
+          <span class="text-xs bg-purple-50 text-purple-600 font-medium px-2 py-0.5 rounded-full">guest</span>
+        {% endif %}
+      </div>
+      {% endif %}
+
       <div class="mt-auto pt-3 flex items-center justify-between text-xs text-gray-400">
         <span>
           {% if p.last_watered %}
