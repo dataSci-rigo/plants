@@ -45,7 +45,7 @@ def index():
             p["user_label"] = None
         plants.append(p)
 
-    return render_template("index.html", plants=plants)
+    return render_template("index.html", plants=plants, url_prefix="")
 
 
 @app.route("/plant/<int:plant_id>")
@@ -63,7 +63,7 @@ def plant_detail(plant_id):
         (plant_id,),
     ).fetchall()
     conn.close()
-    return render_template("plant.html", plant=plant, history=history, height_history=height_history)
+    return render_template("plant.html", plant=plant, history=history, height_history=height_history, url_prefix="")
 
 
 @app.route("/plant/<int:plant_id>/edit", methods=["GET", "POST"])
@@ -133,7 +133,7 @@ def plant_edit(plant_id):
         return redirect(url_for("plant_detail", plant_id=plant_id))
 
     conn.close()
-    return render_template("edit.html", plant=plant)
+    return render_template("edit.html", plant=plant, url_prefix="")
 
 
 @app.route("/plant/<int:plant_id>/photo")

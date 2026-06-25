@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 
-<a href="/" class="text-green-700 hover:underline text-sm font-medium">← All plants</a>
+<a href="{{ url_prefix }}/" class="text-green-700 hover:underline text-sm font-medium">← All plants</a>
 
 <!-- Header card -->
 <div class="mt-4 bg-white rounded-2xl shadow p-6">
@@ -10,7 +10,7 @@
     <!-- Photo -->
     <div class="flex-shrink-0">
       {% if plant.image_data %}
-        <img src="/plant/{{ plant.id }}/photo"
+        <img src="{{ url_prefix }}/plant/{{ plant.id }}/photo"
              alt="{{ plant.name }}"
              class="w-full md:w-64 h-64 object-cover rounded-xl shadow-sm" />
       {% else %}
@@ -119,7 +119,7 @@
       <p class="mt-4 text-xs text-gray-400">Added {{ plant.created_at[:10] }}</p>
 
       <div class="mt-4">
-        <a href="/plant/{{ plant.id }}/edit"
+        <a href="{{ url_prefix }}/plant/{{ plant.id }}/edit"
            class="inline-block bg-green-700 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-green-800 transition-colors">
           ✏️ Edit plant
         </a>

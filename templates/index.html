@@ -15,11 +15,11 @@
 {% else %}
 <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
   {% for p in plants %}
-  <a href="/plant/{{ p.id }}"
+  <a href="{{ url_prefix }}/plant/{{ p.id }}"
      class="bg-white rounded-2xl shadow hover:shadow-lg transition-shadow overflow-hidden flex flex-col">
 
     {% if p.image_data %}
-      <img src="/plant/{{ p.id }}/photo"
+      <img src="{{ url_prefix }}/plant/{{ p.id }}/photo"
            alt="{{ p.name }}"
            class="w-full h-44 object-cover" />
     {% else %}
