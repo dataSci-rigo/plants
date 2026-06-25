@@ -7,7 +7,7 @@ from db import estimate_soil_volume_l
 load_dotenv()
 
 app = Flask(__name__)
-DB_PATH = "plants.db"
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plants.db")
 
 
 def get_db():
@@ -147,5 +147,5 @@ def plant_photo(plant_id):
 
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT_PLANTS", os.getenv("FLASK_PORT", 5060)))
+    port = int(os.getenv("CONTROL_PANEL_PORT", os.getenv("PORT_PLANTS", os.getenv("FLASK_PORT", 5060))))
     app.run(host="0.0.0.0", port=port, debug=False)

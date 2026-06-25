@@ -4,7 +4,7 @@ import os
 from datetime import datetime, date
 from typing import Optional
 
-DB_PATH = "plants.db"
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plants.db")
 
 
 def estimate_soil_volume_l(pot_depth_cm, pot_width_cm) -> Optional[float]:
