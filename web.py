@@ -45,7 +45,7 @@ def index():
             p["user_label"] = None
         plants.append(p)
 
-    return render_template("index.html", plants=plants, url_prefix="")
+    return render_template("plants_list.html", plants=plants, url_prefix="")
 
 
 @app.route("/plant/<int:plant_id>")
@@ -134,6 +134,23 @@ def plant_edit(plant_id):
 
     conn.close()
     return render_template("edit.html", plant=plant, url_prefix="")
+
+
+@app.route("/plant/<int:plant_id>/water", methods=["POST"])
+def plant_water(plant_id):
+    conn = get_db()
+    plant = conn.execute("SELECT id FROM plants WHERE id = ?", (plant_id,)).fetchone()
+    if not plant:
+        conn.close()
+        abort(404)
+    amount_ml = int(request.form.get("amount_ml") or 200)
+    conn.execute(
+        "INSERT INTO watering_history (plant_id, amount_ml) VALUES (?, ?)",
+        (plant_id, amount_ml),
+    )
+    conn.commit()
+    conn.close()
+    return redirect(url_for("plant_detail", plant_id=plant_id))
 
 
 @app.route("/plant/<int:plant_id>/photo")

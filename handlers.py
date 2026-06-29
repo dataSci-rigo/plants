@@ -78,6 +78,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(t("start_help", _lang(update)), parse_mode="Markdown")
 
 
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(t("start_help", _lang(update)), parse_mode="Markdown")
+
+
 async def startserver_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global _flask_process
     if _flask_process and _flask_process.poll() is None:

@@ -118,11 +118,20 @@
 
       <p class="mt-4 text-xs text-gray-400">Added {{ plant.created_at[:10] }}</p>
 
-      <div class="mt-4">
+      <div class="mt-4 flex flex-wrap gap-3 items-center">
         <a href="{{ url_prefix }}/plant/{{ plant.id }}/edit"
            class="inline-block bg-green-700 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-green-800 transition-colors">
           ✏️ Edit plant
         </a>
+        <form method="POST" action="{{ url_prefix }}/plant/{{ plant.id }}/water" class="flex items-center gap-2">
+          <input type="number" name="amount_ml" value="{{ plant.watering_amount_ml }}" min="1"
+                 class="w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+          <span class="text-xs text-gray-400">ml</span>
+          <button type="submit"
+                  class="bg-blue-600 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors">
+            💧 Log watering
+          </button>
+        </form>
       </div>
     </div>
 

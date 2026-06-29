@@ -17,7 +17,7 @@ from handlers import (
     AMOUNT, FACING, FERTILIZER_AMOUNT, FERTILIZER_FREQUENCY, FERTILIZER_TYPE,
     FREQUENCY, HEIGHT, LOCATION, NAME, PHOTO, PLANT_TYPE, POT_DEPTH, POT_WIDTH,
     SOIL_ALKALINITY, SOIL_TYPE, SUNLIGHT_ACTUAL, SUNLIGHT_NEEDED,
-    health_callback, health_command, height_command, list_plants, onboard_amount,
+    health_callback, health_command, help_command, height_command, list_plants, onboard_amount,
     onboard_cancel, onboard_facing, onboard_fertilizer_amount,
     onboard_fertilizer_frequency, onboard_fertilizer_type, onboard_frequency,
     onboard_height, onboard_location, onboard_name, onboard_photo,
@@ -84,6 +84,7 @@ def main():
 
     app.add_handler(onboarding)
     app.add_handler(CommandHandler("start",       start))
+    app.add_handler(CommandHandler("help",        help_command))
     app.add_handler(CommandHandler("list",        list_plants))
     app.add_handler(CommandHandler("water",       water_command))
     app.add_handler(CommandHandler("status",      status_command))
