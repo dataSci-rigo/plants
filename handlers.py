@@ -318,6 +318,122 @@ async def height_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                     parse_mode="Markdown")
 
 
+_TREAT_INGREDIENTS = {"soap", "spinosad", "neem", "kaolin"}
+
+
+async def pest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = _lang(update)
+    uid = update.effective_chat.id
+    if len(context.args) < 2:
+        await update.message.reply_text(t("pest_usage", lang), parse_mode="Markdown")
+        return
+
+    # First word is plant name, rest is description
+    plant = await db.get_plant_by_name(context.args[0], user_id=uid)
+    if plant:
+        desc = " ".join(context.args[1:])
+    else:
+        # Try multi-word plant name: walk back from end until we find a match
+        plant = await db.get_plant_by_name(" ".join(context.args[:-1]), user_id=uid)
+        desc = context.args[-1] if plant else None
+        if not plant:
+            await update.message.reply_text(t("plant_not_found", lang))
+            return
+
+    await db.log_issue(plant["id"], "bug", desc)
+    await update.message.reply_text(t("pest_logged", lang, name=plant["name"], desc=desc),
+                                    parse_mode="Markdown")
+
+
+async def disease_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = _lang(update)
+    uid = update.effective_chat.id
+    if len(context.args) < 2:
+        await update.message.reply_text(t("disease_usage", lang), parse_mode="Markdown")
+        return
+
+    plant = await db.get_plant_by_name(context.args[0], user_id=uid)
+    if plant:
+        desc = " ".join(context.args[1:])
+    else:
+        plant = await db.get_plant_by_name(" ".join(context.args[:-1]), user_id=uid)
+        desc = context.args[-1] if plant else None
+        if not plant:
+            await update.message.reply_text(t("plant_not_found", lang))
+            return
+
+    await db.log_issue(plant["id"], "fungal", desc)
+    await update.message.reply_text(t("disease_logged", lang, name=plant["name"], desc=desc),
+                                    parse_mode="Markdown")
+
+
+async def treat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = _lang(update)
+    uid = update.effective_chat.id
+    if not context.args:
+        await update.message.reply_text(t("treat_usage", lang), parse_mode="Markdown")
+        return
+
+    # Resolve plant name (first token(s) that match)
+    plant = await db.get_plant_by_name(context.args[0], user_id=uid)
+    remaining = list(context.args[1:])
+    if not plant and len(context.args) >= 2:
+        plant = await db.get_plant_by_name(" ".join(context.args[:2]), user_id=uid)
+        remaining = list(context.args[2:])
+    if not plant:
+        await update.message.reply_text(t("plant_not_found", lang))
+        return
+
+    ingredients = {k: False for k in _TREAT_INGREDIENTS}
+    notes_parts = []
+    for token in remaining:
+        if token.lower() in _TREAT_INGREDIENTS:
+            ingredients[token.lower()] = True
+        else:
+            notes_parts.append(token)
+
+    if not any(ingredients.values()):
+        await update.message.reply_text(t("treat_nothing", lang), parse_mode="Markdown")
+        return
+
+    notes = " ".join(notes_parts) if notes_parts else None
+    await db.log_treatment(plant["id"], notes=notes, **ingredients)
+
+    used = [k for k, v in ingredients.items() if v]
+    label = " + ".join(used)
+    if notes:
+        label += f" ({notes})"
+    await update.message.reply_text(t("treat_logged", lang, name=plant["name"], ingredients=label),
+                                    parse_mode="Markdown")
+
+
+async def issues_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = _lang(update)
+    uid = update.effective_chat.id
+    if not context.args:
+        await update.message.reply_text(t("issues_usage", lang), parse_mode="Markdown")
+        return
+
+    plant = await db.get_plant_by_name(" ".join(context.args), user_id=uid)
+    if not plant:
+        await update.message.reply_text(t("plant_not_found", lang))
+        return
+
+    open_issues = await db.get_issues(plant["id"], open_only=True)
+    if not open_issues:
+        await update.message.reply_text(t("issues_none", lang, name=plant["name"]),
+                                        parse_mode="Markdown")
+        return
+
+    lines = [t("issues_header", lang, name=plant["name"])]
+    for iss in open_issues:
+        lines.append(t("issue_row", lang,
+                       cat=iss["category"],
+                       desc=iss["description"],
+                       date=iss["observed_at"][:10]))
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
 # ── Reply handlers ───────────────────────────────────────────────────────────
 
 async def handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):

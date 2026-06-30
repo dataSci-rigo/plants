@@ -62,8 +62,18 @@ def plant_detail(plant_id):
         "SELECT * FROM height_history WHERE plant_id = ? ORDER BY measured_at DESC",
         (plant_id,),
     ).fetchall()
+    issues = conn.execute(
+        "SELECT * FROM issues WHERE plant_id = ? ORDER BY resolved ASC, observed_at DESC",
+        (plant_id,),
+    ).fetchall()
+    treatments = conn.execute(
+        "SELECT * FROM treatments WHERE plant_id = ? ORDER BY applied_at DESC",
+        (plant_id,),
+    ).fetchall()
     conn.close()
-    return render_template("plant.html", plant=plant, history=history, height_history=height_history, url_prefix="")
+    return render_template("plant.html", plant=plant, history=history,
+                           height_history=height_history, issues=issues, treatments=treatments,
+                           url_prefix="")
 
 
 @app.route("/plant/<int:plant_id>/edit", methods=["GET", "POST"])
@@ -134,6 +144,59 @@ def plant_edit(plant_id):
 
     conn.close()
     return render_template("edit.html", plant=plant, url_prefix="")
+
+
+@app.route("/plant/<int:plant_id>/issue", methods=["POST"])
+def plant_log_issue(plant_id):
+    conn = get_db()
+    plant = conn.execute("SELECT id FROM plants WHERE id = ?", (plant_id,)).fetchone()
+    if not plant:
+        conn.close()
+        abort(404)
+    category = request.form.get("category", "other")
+    description = request.form.get("description", "").strip()
+    if description:
+        conn.execute(
+            "INSERT INTO issues (plant_id, category, description) VALUES (?, ?, ?)",
+            (plant_id, category, description),
+        )
+        conn.commit()
+    conn.close()
+    return redirect(url_for("plant_detail", plant_id=plant_id))
+
+
+@app.route("/plant/<int:plant_id>/issue/<int:issue_id>/resolve", methods=["POST"])
+def plant_resolve_issue(plant_id, issue_id):
+    conn = get_db()
+    conn.execute(
+        "UPDATE issues SET resolved = 1, resolved_at = CURRENT_TIMESTAMP WHERE id = ? AND plant_id = ?",
+        (issue_id, plant_id),
+    )
+    conn.commit()
+    conn.close()
+    return redirect(url_for("plant_detail", plant_id=plant_id))
+
+
+@app.route("/plant/<int:plant_id>/treat", methods=["POST"])
+def plant_log_treatment(plant_id):
+    conn = get_db()
+    plant = conn.execute("SELECT id FROM plants WHERE id = ?", (plant_id,)).fetchone()
+    if not plant:
+        conn.close()
+        abort(404)
+    f = request.form
+    soap     = 1 if f.get("soap")     else 0
+    spinosad = 1 if f.get("spinosad") else 0
+    neem     = 1 if f.get("neem")     else 0
+    kaolin   = 1 if f.get("kaolin")   else 0
+    notes    = f.get("notes", "").strip() or None
+    conn.execute(
+        "INSERT INTO treatments (plant_id, soap, spinosad, neem, kaolin, notes) VALUES (?, ?, ?, ?, ?, ?)",
+        (plant_id, soap, spinosad, neem, kaolin, notes),
+    )
+    conn.commit()
+    conn.close()
+    return redirect(url_for("plant_detail", plant_id=plant_id))
 
 
 @app.route("/plant/<int:plant_id>/water", methods=["POST"])

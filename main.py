@@ -17,14 +17,15 @@ from handlers import (
     AMOUNT, FACING, FERTILIZER_AMOUNT, FERTILIZER_FREQUENCY, FERTILIZER_TYPE,
     FREQUENCY, HEIGHT, LOCATION, NAME, PHOTO, PLANT_TYPE, POT_DEPTH, POT_WIDTH,
     SOIL_ALKALINITY, SOIL_TYPE, SUNLIGHT_ACTUAL, SUNLIGHT_NEEDED,
-    health_callback, health_command, help_command, height_command, list_plants, onboard_amount,
+    disease_command, health_callback, health_command, help_command, height_command,
+    issues_command, list_plants, onboard_amount,
     onboard_cancel, onboard_facing, onboard_fertilizer_amount,
     onboard_fertilizer_frequency, onboard_fertilizer_type, onboard_frequency,
     onboard_height, onboard_location, onboard_name, onboard_photo,
     onboard_pot_depth, onboard_pot_width, onboard_soil_alkalinity,
     onboard_soil_type, onboard_start, onboard_sunlight_actual, onboard_sunlight_needed,
-    onboard_type, photo_command,
-    start, status_command, water_command,
+    onboard_type, pest_command, photo_command,
+    start, status_command, treat_command, water_command,
     handle_photo_reply, handle_reply,
     startserver_command, stopserver_command,
 )
@@ -91,6 +92,10 @@ def main():
     app.add_handler(CommandHandler("photo",       photo_command))
     app.add_handler(CommandHandler("health",      health_command))
     app.add_handler(CommandHandler("height",      height_command))
+    app.add_handler(CommandHandler("pest",        pest_command))
+    app.add_handler(CommandHandler("disease",     disease_command))
+    app.add_handler(CommandHandler("treat",       treat_command))
+    app.add_handler(CommandHandler("issues",      issues_command))
     app.add_handler(CommandHandler("startserver", startserver_command))
     app.add_handler(CommandHandler("stopserver",  stopserver_command))
     app.add_handler(CallbackQueryHandler(health_callback, pattern=r"^health:\d+$"))

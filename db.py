@@ -82,6 +82,30 @@ async def init_db():
                 key   TEXT PRIMARY KEY,
                 value TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS issues (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                plant_id    INTEGER NOT NULL,
+                category    TEXT NOT NULL DEFAULT 'other',
+                description TEXT NOT NULL,
+                severity    TEXT DEFAULT 'mild',
+                resolved    INTEGER DEFAULT 0,
+                observed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                resolved_at TIMESTAMP,
+                FOREIGN KEY (plant_id) REFERENCES plants(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS treatments (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                plant_id   INTEGER NOT NULL,
+                soap       INTEGER DEFAULT 0,
+                spinosad   INTEGER DEFAULT 0,
+                neem       INTEGER DEFAULT 0,
+                kaolin     INTEGER DEFAULT 0,
+                notes      TEXT,
+                applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (plant_id) REFERENCES plants(id) ON DELETE CASCADE
+            );
         """)
         await db.commit()
         # Migrations: add columns introduced after the initial schema, for existing databases
@@ -345,3 +369,62 @@ async def get_cached_weather() -> Optional[dict]:
         )
         row = await cursor.fetchone()
         return {"temp_c": row[0], "humidity": row[1], "description": row[2]} if row else None
+
+
+async def log_issue(plant_id: int, category: str, description: str, severity: str = "mild") -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "INSERT INTO issues (plant_id, category, description, severity) VALUES (?, ?, ?, ?)",
+            (plant_id, category, description, severity),
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def get_issues(plant_id: int, open_only: bool = False):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        if open_only:
+            cursor = await db.execute(
+                "SELECT * FROM issues WHERE plant_id = ? AND resolved = 0 ORDER BY observed_at DESC",
+                (plant_id,),
+            )
+        else:
+            cursor = await db.execute(
+                "SELECT * FROM issues WHERE plant_id = ? ORDER BY observed_at DESC",
+                (plant_id,),
+            )
+        return await cursor.fetchall()
+
+
+async def resolve_issue(issue_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE issues SET resolved = 1, resolved_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (issue_id,),
+        )
+        await db.commit()
+
+
+async def log_treatment(
+    plant_id: int,
+    soap: bool = False, spinosad: bool = False, neem: bool = False, kaolin: bool = False,
+    notes: str = None,
+) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "INSERT INTO treatments (plant_id, soap, spinosad, neem, kaolin, notes) VALUES (?, ?, ?, ?, ?, ?)",
+            (plant_id, int(soap), int(spinosad), int(neem), int(kaolin), notes),
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def get_treatments(plant_id: int, limit: int = 20):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM treatments WHERE plant_id = ? ORDER BY applied_at DESC LIMIT ?",
+            (plant_id, limit),
+        )
+        return await cursor.fetchall()

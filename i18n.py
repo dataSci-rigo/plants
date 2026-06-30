@@ -11,6 +11,10 @@ _EN = {
         "/photo `<plant>` — Get plant photo\n"
         "/health `<plant>` — AI health check\n"
         "/height `<plant>` `<cm>` — Log a new height reading\n"
+        "/pest `<plant>` `<description>` — Log a bug infestation\n"
+        "/disease `<plant>` `<description>` — Log rust/mold/fungal issue\n"
+        "/treat `<plant>` `[soap]` `[neem]` `[spinosad]` `[kaolin]` — Log a treatment\n"
+        "/issues `<plant>` — Show open pest/disease issues\n"
         "/startserver — Start the plant dashboard\n"
         "/stopserver — Stop the dashboard\n\n"
         "Reply to any daily recommendation to log watering or update a photo."
@@ -95,6 +99,18 @@ _EN = {
     "daily_yesterday":  "watered yesterday",
     "daily_days_ago":   "last watered {days} days ago",
     "height_reminder":  "📏 *Time for a height check-in!*\n\nReply with `/height <plant> <cm>` for each:",
+    # pest / disease / treatment
+    "pest_usage":       "Usage: `/pest <plant name> <description>`\ne.g. `/pest Jasmine aphids on leaves`",
+    "pest_logged":      "🐛 Logged bug issue on *{name}*: {desc}",
+    "disease_usage":    "Usage: `/disease <plant name> <description>`\ne.g. `/disease Jasmine rust on lower leaves`",
+    "disease_logged":   "🍂 Logged disease on *{name}*: {desc}",
+    "treat_usage":      "Usage: `/treat <plant name> [soap] [neem] [spinosad] [kaolin] [notes]`\ne.g. `/treat Jasmine neem soap`",
+    "treat_logged":     "💊 Logged treatment for *{name}*: {ingredients}",
+    "treat_nothing":    "Specify at least one ingredient: `soap`, `neem`, `spinosad`, `kaolin`",
+    "issues_usage":     "Usage: `/issues <plant name>`",
+    "issues_none":      "No open issues for *{name}* — looking healthy! 🌿",
+    "issues_header":    "⚠️ *Open issues for {name}*\n",
+    "issue_row":        "• [{cat}] {desc} (since {date})",
 }
 
 # ── Spanish strings ───────────────────────────────────────────────────────────
@@ -108,6 +124,10 @@ _ES = {
         "/photo `<planta>` — Ver foto de la planta\n"
         "/health `<planta>` — Revisión de salud con IA\n"
         "/height `<planta>` `<cm>` — Registrar altura\n"
+        "/pest `<planta>` `<descripción>` — Registrar plaga de insectos\n"
+        "/disease `<planta>` `<descripción>` — Registrar roya/moho/hongo\n"
+        "/treat `<planta>` `[soap]` `[neem]` `[spinosad]` `[kaolin]` — Registrar tratamiento\n"
+        "/issues `<planta>` — Ver problemas abiertos\n"
         "/startserver — Abrir panel web\n"
         "/stopserver — Cerrar panel web\n\n"
         "Responde a cualquier recomendación diaria para registrar el riego o actualizar la foto."
@@ -189,6 +209,18 @@ _ES = {
     "daily_yesterday": "regada ayer",
     "daily_days_ago":  "regada hace {days} días",
     "height_reminder": "📏 *¡Hora de medir la altura de tus plantas!*\n\nResponde con `/height <planta> <cm>` para cada una:",
+    # pest / disease / treatment
+    "pest_usage":       "Uso: `/pest <planta> <descripción>`\nej. `/pest Jazmín pulgones en las hojas`",
+    "pest_logged":      "🐛 Registré plaga en *{name}*: {desc}",
+    "disease_usage":    "Uso: `/disease <planta> <descripción>`\nej. `/disease Jazmín roya en hojas bajas`",
+    "disease_logged":   "🍂 Registré enfermedad en *{name}*: {desc}",
+    "treat_usage":      "Uso: `/treat <planta> [soap] [neem] [spinosad] [kaolin] [notas]`\nej. `/treat Jazmín neem soap`",
+    "treat_logged":     "💊 Registré tratamiento para *{name}*: {ingredients}",
+    "treat_nothing":    "Especifica al menos un ingrediente: `soap`, `neem`, `spinosad`, `kaolin`",
+    "issues_usage":     "Uso: `/issues <planta>`",
+    "issues_none":      "No hay problemas abiertos para *{name}* — ¡se ve saludable! 🌿",
+    "issues_header":    "⚠️ *Problemas abiertos de {name}*\n",
+    "issue_row":        "• [{cat}] {desc} (desde {date})",
 }
 
 _STRINGS = {"en": _EN, "es": _ES}
