@@ -1,6 +1,7 @@
 import logging
 import os
 from datetime import datetime
+from telegram.error import BadRequest, Forbidden
 from telegram.ext import ContextTypes
 import db
 from weather import fetch_weather, water_adjustment
@@ -44,38 +45,42 @@ async def send_daily_recommendations(context: ContextTypes.DEFAULT_TYPE):
         lang = lang_for(chat_id)
         plants = await db.get_plants_needing_water_for_user(chat_id)
 
-        if not plants:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=t("daily_all_good", lang, weather=weather_header),
-                parse_mode="Markdown",
-            )
-            continue
+        try:
+            if not plants:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=t("daily_all_good", lang, weather=weather_header),
+                    parse_mode="Markdown",
+                )
+                continue
 
-        for plant in plants:
-            last_watered = plant["last_watered"]
-            if last_watered:
-                days_since = (datetime.now() - datetime.fromisoformat(last_watered)).days
-                if days_since == 0:
-                    last_str = t("daily_today", lang)
-                elif days_since == 1:
-                    last_str = t("daily_yesterday", lang)
+            for plant in plants:
+                last_watered = plant["last_watered"]
+                if last_watered:
+                    days_since = (datetime.now() - datetime.fromisoformat(last_watered)).days
+                    if days_since == 0:
+                        last_str = t("daily_today", lang)
+                    elif days_since == 1:
+                        last_str = t("daily_yesterday", lang)
+                    else:
+                        last_str = t("daily_days_ago", lang, days=days_since)
                 else:
-                    last_str = t("daily_days_ago", lang, days=days_since)
-            else:
-                last_str = t("daily_never", lang)
+                    last_str = t("daily_never", lang)
 
-            recommended_ml = int(plant["watering_amount_ml"] * multiplier)
-            msg = await context.bot.send_message(
-                chat_id=chat_id,
-                text=t("daily_rec", lang,
-                       weather=weather_header,
-                       name=plant["name"],
-                       last=last_str,
-                       ml=recommended_ml),
-                parse_mode="Markdown",
-            )
-            await db.save_plant_message(plant["id"], chat_id, msg.message_id)
+                recommended_ml = int(plant["watering_amount_ml"] * multiplier)
+                msg = await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=t("daily_rec", lang,
+                           weather=weather_header,
+                           name=plant["name"],
+                           last=last_str,
+                           ml=recommended_ml),
+                    parse_mode="Markdown",
+                )
+                await db.save_plant_message(plant["id"], chat_id, msg.message_id)
+
+        except (BadRequest, Forbidden) as e:
+            logger.warning("Skipping daily rec for chat_id=%s: %s", chat_id, e)
 
     logger.info("Sent daily recommendations to all users")
 
@@ -93,8 +98,11 @@ async def send_height_reminder(context: ContextTypes.DEFAULT_TYPE):
             last_str = f" (last: {last} cm)" if last is not None else ""
             lines.append(f"• `/height {plant['name']} <cm>`{last_str}")
 
-        await context.bot.send_message(
-            chat_id=chat_id, text="\n".join(lines), parse_mode="Markdown"
-        )
+        try:
+            await context.bot.send_message(
+                chat_id=chat_id, text="\n".join(lines), parse_mode="Markdown"
+            )
+        except (BadRequest, Forbidden) as e:
+            logger.warning("Skipping height reminder for chat_id=%s: %s", chat_id, e)
 
     logger.info("Sent height reminder to all users")

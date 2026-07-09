@@ -813,7 +813,6 @@ async def onboard_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         fert = t("status_no_fert", lang)
 
     height_str = f"{data.get('height_cm')} cm" if data.get("height_cm") else "?"
-    context.user_data.clear()
 
     await update.message.reply_text(
         t("ob_done", lang,
@@ -829,6 +828,7 @@ async def onboard_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
           ml=data["watering_amount_ml"]),
         parse_mode="Markdown",
     )
+    context.user_data.clear()
     return ConversationHandler.END
 
 
