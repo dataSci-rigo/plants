@@ -76,6 +76,74 @@ def plant_detail(plant_id):
                            url_prefix="")
 
 
+@app.route("/plant/new", methods=["GET", "POST"])
+def plant_new():
+    if request.method == "GET":
+        return render_template("add.html", url_prefix="")
+
+    f = request.form
+
+    def _float(key):
+        v = f.get(key, "").strip()
+        return float(v) if v else None
+
+    def _int(key):
+        v = f.get(key, "").strip()
+        return int(v) if v else None
+
+    def _str(key):
+        v = f.get(key, "").strip()
+        return v if v else None
+
+    name = f.get("name", "").strip()
+    if not name:
+        return render_template("add.html", url_prefix="", error="Name is required.")
+
+    location = _str("location")
+    pot_depth = _float("pot_depth_cm")
+    pot_width = _float("pot_width_cm")
+    soil_volume = estimate_soil_volume_l(pot_depth, pot_width) if location == "pot" else None
+
+    conn = get_db()
+    try:
+        cursor = conn.execute(
+            """INSERT INTO plants (
+                name, plant_type, location, pot_depth_cm, pot_width_cm, soil_volume_l,
+                soil_alkalinity, soil_type, fertilizer_type, fertilizer_amount,
+                fertilizer_frequency_days, facing, height_cm, sunlight_hours_actual,
+                sunlight_hours_needed, watering_frequency_days, watering_amount_ml, notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                name, _str("plant_type"), location, pot_depth, pot_width, soil_volume,
+                _str("soil_alkalinity"), _str("soil_type"), _str("fertilizer_type"),
+                _str("fertilizer_amount"), _int("fertilizer_frequency_days"),
+                _str("facing"), _float("height_cm"), _float("sunlight_hours_actual"),
+                _float("sunlight_hours_needed"),
+                _int("watering_frequency_days") or 7,
+                _int("watering_amount_ml") or 200,
+                _str("notes"),
+            ),
+        )
+        plant_id = cursor.lastrowid
+        if _float("height_cm"):
+            conn.execute(
+                "INSERT INTO height_history (plant_id, height_cm) VALUES (?, ?)",
+                (plant_id, _float("height_cm")),
+            )
+        photo = request.files.get("photo")
+        if photo and photo.filename:
+            conn.execute(
+                "UPDATE plants SET image_data = ? WHERE id = ?",
+                (photo.read(), plant_id),
+            )
+        conn.commit()
+    except Exception as e:
+        conn.close()
+        return render_template("add.html", url_prefix="", error=str(e))
+    conn.close()
+    return redirect(url_for("plant_detail", plant_id=plant_id))
+
+
 @app.route("/plant/<int:plant_id>/edit", methods=["GET", "POST"])
 def plant_edit(plant_id):
     conn = get_db()

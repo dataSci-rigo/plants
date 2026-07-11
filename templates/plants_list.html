@@ -3,14 +3,20 @@
 
 <div class="flex items-center justify-between mb-6">
   <h1 class="text-2xl font-bold text-green-800">My Plants</h1>
-  <span class="bg-green-100 text-green-700 text-sm font-semibold px-3 py-1 rounded-full">
-    {{ plants | length }} plants
-  </span>
+  <div class="flex items-center gap-3">
+    <span class="bg-green-100 text-green-700 text-sm font-semibold px-3 py-1 rounded-full">
+      {{ plants | length }} plants
+    </span>
+    <a href="{{ url_prefix }}/plant/new"
+       class="bg-green-700 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-green-800 transition-colors">
+      + Add plant
+    </a>
+  </div>
 </div>
 
 {% if not plants %}
 <div class="text-center text-gray-400 py-24 text-lg">
-  No plants yet — add some via the Telegram bot with <code>/add</code>.
+  No plants yet — <a href="{{ url_prefix }}/plant/new" class="text-green-700 underline">add your first plant</a>.
 </div>
 {% else %}
 <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
