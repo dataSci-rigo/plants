@@ -29,6 +29,7 @@ from handlers import (
     handle_photo_reply, handle_reply,
     startserver_command, stopserver_command,
 )
+from quickadd import build_quickadd_handler
 from scheduler import send_daily_recommendations, send_height_reminder
 
 load_dotenv()
@@ -83,6 +84,7 @@ def main():
         fallbacks=[CommandHandler("cancel", onboard_cancel)],
     )
 
+    app.add_handler(build_quickadd_handler())
     app.add_handler(onboarding)
     app.add_handler(CommandHandler("start",       start))
     app.add_handler(CommandHandler("help",        help_command))

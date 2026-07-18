@@ -4,7 +4,8 @@ import os
 _EN = {
     "start_help": (
         "🌱 *Plant Tracker*\n\n"
-        "/add — Onboard a new plant\n"
+        "/add — Onboard a new plant (step-by-step)\n"
+        "/quickadd — Add a plant from a photo (AI-assisted)\n"
         "/list — All plants & last watered\n"
         "/water `<plant>` `[ml]` — Log a watering\n"
         "/status `<plant>` — Watering history\n"
@@ -117,7 +118,8 @@ _EN = {
 _ES = {
     "start_help": (
         "🌱 *Rastreador de Plantas*\n\n"
-        "/add — Registrar una planta nueva\n"
+        "/add — Registrar una planta nueva (paso a paso)\n"
+        "/quickadd — Agregar planta desde foto (asistido por IA)\n"
         "/list — Ver todas tus plantas\n"
         "/water `<planta>` `[ml]` — Registrar riego\n"
         "/status `<planta>` — Historial de riego\n"
