@@ -387,22 +387,21 @@ async def quickadd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── ConversationHandler factory ───────────────────────────────────────────────
 
 def build_quickadd_handler() -> ConversationHandler:
-    cq = CallbackQueryHandler
-    txt = MessageHandler(filters.TEXT & ~filters.COMMAND)
+    _txt = filters.TEXT & ~filters.COMMAND
     return ConversationHandler(
         entry_points=[CommandHandler("quickadd", quickadd_start)],
         states={
             QA_PHOTO:           [MessageHandler(filters.PHOTO, quickadd_photo)],
-            QA_NAME:            [cq(quickadd_name_pick,      pattern=r"^qa_name:")],
-            QA_NAME_CUSTOM:     [txt(quickadd_name_custom)],
-            QA_LOCATION:        [cq(quickadd_location,       pattern=r"^qa_loc:")],
-            QA_SOIL:            [cq(quickadd_soil,           pattern=r"^qa_soil:")],
-            QA_SOIL_CUSTOM:     [txt(quickadd_soil_custom)],
-            QA_FACING:          [cq(quickadd_facing,         pattern=r"^qa_facing:")],
-            QA_HEIGHT:          [cq(quickadd_height,         pattern=r"^qa_height:")],
-            QA_HEIGHT_CUSTOM:   [txt(quickadd_height_custom)],
-            QA_WATERING:        [cq(quickadd_watering,       pattern=r"^qa_water:")],
-            QA_WATERING_CUSTOM: [txt(quickadd_watering_custom)],
+            QA_NAME:            [CallbackQueryHandler(quickadd_name_pick,      pattern=r"^qa_name:")],
+            QA_NAME_CUSTOM:     [MessageHandler(_txt, quickadd_name_custom)],
+            QA_LOCATION:        [CallbackQueryHandler(quickadd_location,       pattern=r"^qa_loc:")],
+            QA_SOIL:            [CallbackQueryHandler(quickadd_soil,           pattern=r"^qa_soil:")],
+            QA_SOIL_CUSTOM:     [MessageHandler(_txt, quickadd_soil_custom)],
+            QA_FACING:          [CallbackQueryHandler(quickadd_facing,         pattern=r"^qa_facing:")],
+            QA_HEIGHT:          [CallbackQueryHandler(quickadd_height,         pattern=r"^qa_height:")],
+            QA_HEIGHT_CUSTOM:   [MessageHandler(_txt, quickadd_height_custom)],
+            QA_WATERING:        [CallbackQueryHandler(quickadd_watering,       pattern=r"^qa_water:")],
+            QA_WATERING_CUSTOM: [MessageHandler(_txt, quickadd_watering_custom)],
         },
         fallbacks=[CommandHandler("cancel", quickadd_cancel)],
         per_message=False,
