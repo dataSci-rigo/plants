@@ -27,19 +27,18 @@ def _all_user_ids() -> list[int]:
 async def send_daily_recommendations(context: ContextTypes.DEFAULT_TYPE):
     weather = await fetch_weather()
     multiplier = 1.0
-    weather_header = ""
+    weather_text = ""
 
     if weather:
         multiplier, reason = water_adjustment(weather["temp_c"])
-        weather_header = (
+        weather_text = (
             f"🌡️ {weather['description'].capitalize()}, "
             f"{weather['temp_c']:.0f}°C, {weather['humidity']}% humidity"
         )
         if multiplier != 1.0:
             direction = "more" if multiplier > 1.0 else "less"
             pct = abs(round((multiplier - 1) * 100))
-            weather_header += f" — recommending {pct}% {direction} water ({reason})"
-        weather_header += "\n\n"
+            weather_text += f" — recommending {pct}% {direction} water ({reason})"
 
     for chat_id in _all_user_ids():
         lang = lang_for(chat_id)
@@ -47,13 +46,22 @@ async def send_daily_recommendations(context: ContextTypes.DEFAULT_TYPE):
 
         try:
             if not plants:
+                no_water_msg = t("daily_all_good", lang)
+                if weather_text:
+                    no_water_msg = weather_text + "\n\n" + no_water_msg
                 await context.bot.send_message(
                     chat_id=chat_id,
-                    text=t("daily_all_good", lang, weather=weather_header),
+                    text=no_water_msg,
                     parse_mode="Markdown",
                 )
                 continue
 
+            # 1. Weather — standalone message
+            if weather_text:
+                await context.bot.send_message(chat_id=chat_id, text=weather_text)
+
+            # 2. Combined last-watered summary + instructions
+            lines = [t("daily_header", lang)]
             for plant in plants:
                 last_watered = plant["last_watered"]
                 if last_watered:
@@ -66,15 +74,20 @@ async def send_daily_recommendations(context: ContextTypes.DEFAULT_TYPE):
                         last_str = t("daily_days_ago", lang, days=days_since)
                 else:
                     last_str = t("daily_never", lang)
+                lines.append(f"🌿 *{plant['name']}* — {last_str}")
+            lines.append(t("daily_instructions", lang))
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="\n".join(lines),
+                parse_mode="Markdown",
+            )
 
+            # 3. Per-plant reply-trackable messages
+            for plant in plants:
                 recommended_ml = int(plant["watering_amount_ml"] * multiplier)
                 msg = await context.bot.send_message(
                     chat_id=chat_id,
-                    text=t("daily_rec", lang,
-                           weather=weather_header,
-                           name=plant["name"],
-                           last=last_str,
-                           ml=recommended_ml),
+                    text=t("daily_plant_rec", lang, name=plant["name"], ml=recommended_ml),
                     parse_mode="Markdown",
                 )
                 await db.save_plant_message(plant["id"], chat_id, msg.message_id)

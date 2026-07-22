@@ -286,6 +286,18 @@ async def get_plant_by_message(chat_id: int, message_id: int):
         return await cursor.fetchone()
 
 
+async def get_plants_by_message(chat_id: int, message_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """SELECT p.* FROM plants p
+               JOIN plant_messages pm ON p.id = pm.plant_id
+               WHERE pm.chat_id = ? AND pm.message_id = ?""",
+            (chat_id, message_id),
+        )
+        return await cursor.fetchall()
+
+
 async def get_plants_needing_water():
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
