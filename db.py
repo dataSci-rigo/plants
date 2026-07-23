@@ -106,6 +106,19 @@ async def init_db():
                 applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (plant_id) REFERENCES plants(id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS plant_reports (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                plant_id     INTEGER NOT NULL UNIQUE,
+                health       TEXT,
+                fertilizer   TEXT,
+                repotting    TEXT,
+                pruning      TEXT,
+                insecticide  TEXT,
+                source       TEXT,
+                generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (plant_id) REFERENCES plants(id) ON DELETE CASCADE
+            );
         """)
         await db.commit()
         # Migrations: add columns introduced after the initial schema, for existing databases
@@ -186,6 +199,13 @@ async def get_all_plants(user_id=None):
 
 
 async def get_plant(plant_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM plants WHERE id = ?", (plant_id,))
+        return await cursor.fetchone()
+
+
+async def get_plant_by_id(plant_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute("SELECT * FROM plants WHERE id = ?", (plant_id,))
@@ -362,6 +382,27 @@ async def set_setting(key: str, value: str):
             "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value))
         )
         await db.commit()
+
+
+async def save_plant_report(plant_id: int, health: str, fertilizer: str,
+                             repotting: str, pruning: str, insecticide: str, source: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT OR REPLACE INTO plant_reports
+               (plant_id, health, fertilizer, repotting, pruning, insecticide, source, generated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+            (plant_id, health, fertilizer, repotting, pruning, insecticide, source),
+        )
+        await db.commit()
+
+
+async def get_plant_report(plant_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM plant_reports WHERE plant_id = ?", (plant_id,)
+        )
+        return await cursor.fetchone()
 
 
 async def cache_weather(temp_c: float, humidity: int, description: str):

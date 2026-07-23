@@ -1,15 +1,20 @@
 """
 Expedited plant onboarding via photo + AI identification.
 Usage: /quickadd → send photo → tap through AI suggestions → plant saved.
+Two AI calls: (1) identify species/pot/height for user confirmation,
+              (2) full health+care report saved silently in background.
 """
 
+import asyncio
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ContextTypes, ConversationHandler,
     CommandHandler, MessageHandler, CallbackQueryHandler, filters,
 )
+import ai as _ai
 import db
+import perenual
 from ai import analyze_plant_image
 
 logger = logging.getLogger(__name__)
@@ -18,12 +23,14 @@ logger = logging.getLogger(__name__)
 (
     QA_PHOTO,
     QA_NAME, QA_NAME_CUSTOM,
+    QA_PLANT_TYPE, QA_PLANT_TYPE_CUSTOM,
     QA_LOCATION,
     QA_SOIL, QA_SOIL_CUSTOM,
+    QA_POT, QA_POT_CUSTOM,
     QA_FACING,
     QA_HEIGHT, QA_HEIGHT_CUSTOM,
     QA_WATERING, QA_WATERING_CUSTOM,
-) = range(200, 211)
+) = range(200, 215)
 
 _SOIL_OPTIONS = ["Potting mix", "Cactus mix", "Garden soil"]
 _FACINGS = [
@@ -106,12 +113,48 @@ async def quickadd_name_pick(update: Update, context: ContextTypes.DEFAULT_TYPE)
     names = qa["ai"].get("name_suggestions", [])
     qa["name"] = names[idx] if idx < len(names) else "Unknown"
     await query.edit_message_text(f"✅ *{qa['name']}*", parse_mode="Markdown")
-    return await _ask_location(query.message, context)
+    return await _ask_plant_type(query.message, context)
 
 
 async def quickadd_name_custom(update: Update, context: ContextTypes.DEFAULT_TYPE):
     qa = _qa(context)
     qa["name"] = update.message.text.strip()
+    return await _ask_plant_type(update.message, context)
+
+
+# ── Plant type ────────────────────────────────────────────────────────────────
+
+async def _ask_plant_type(message, context):
+    ai_type = _qa(context)["ai"].get("plant_type")
+    rows = []
+    if ai_type:
+        rows.append([(f"🤖 AI: {ai_type}", "qa_type:ai")])
+    rows.append([("✏️ Other", "qa_type:other"), ("⏭ Skip", "qa_type:skip")])
+    await message.reply_text("🌿 What type of plant is this?", reply_markup=_kb(*rows))
+    return QA_PLANT_TYPE
+
+
+async def quickadd_plant_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    qa = _qa(context)
+    val = query.data.split(":", 1)[1]
+
+    if val == "other":
+        await query.edit_message_text("Type the plant species or type (e.g. 'succulent', 'tomato'):")
+        return QA_PLANT_TYPE_CUSTOM
+    elif val == "ai":
+        qa["plant_type"] = qa["ai"].get("plant_type")
+    else:
+        qa["plant_type"] = None
+
+    label = qa.get("plant_type") or "skipped"
+    await query.edit_message_text(f"🌿 Type: *{label}*", parse_mode="Markdown")
+    return await _ask_location(query.message, context)
+
+
+async def quickadd_plant_type_custom(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    _qa(context)["plant_type"] = update.message.text.strip()
     return await _ask_location(update.message, context)
 
 
@@ -179,11 +222,58 @@ async def quickadd_soil(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     label = qa.get("soil_type") or "skipped"
     await query.edit_message_text(f"🪨 Soil: *{label}*", parse_mode="Markdown")
-    return await _ask_facing(query.message, context)
+    return await _ask_pot(query.message, context)
 
 
 async def quickadd_soil_custom(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _qa(context)["soil_type"] = update.message.text.strip()
+    return await _ask_pot(update.message, context)
+
+
+# ── Pot size ──────────────────────────────────────────────────────────────────
+
+async def _ask_pot(message, context):
+    ai = _qa(context)["ai"]
+    w, d = ai.get("pot_width_cm"), ai.get("pot_depth_cm")
+    rows = []
+    if w or d:
+        label = f"🤖 AI: ~{w or '?'} cm wide, {d or '?'} cm deep"
+        rows.append([(label, "qa_pot:ai")])
+    rows.append([("✏️ Enter (e.g. '20 18')", "qa_pot:custom"), ("⏭ Skip", "qa_pot:skip")])
+    await message.reply_text("🪴 Pot dimensions (width × depth)?", reply_markup=_kb(*rows))
+    return QA_POT
+
+
+async def quickadd_pot(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    qa = _qa(context)
+    val = query.data.split(":", 1)[1]
+
+    if val == "custom":
+        await query.edit_message_text("Enter pot size as `width depth` in cm (e.g. `20 18`):", parse_mode="Markdown")
+        return QA_POT_CUSTOM
+    elif val == "ai":
+        qa["pot_width_cm"] = qa["ai"].get("pot_width_cm")
+        qa["pot_depth_cm"] = qa["ai"].get("pot_depth_cm")
+    else:
+        qa["pot_width_cm"] = qa["pot_depth_cm"] = None
+
+    w, d = qa.get("pot_width_cm"), qa.get("pot_depth_cm")
+    label = f"{w} × {d} cm" if (w or d) else "skipped"
+    await query.edit_message_text(f"🪴 Pot: *{label}*", parse_mode="Markdown")
+    return await _ask_facing(query.message, context)
+
+
+async def quickadd_pot_custom(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    qa = _qa(context)
+    parts = update.message.text.strip().split()
+    try:
+        qa["pot_width_cm"] = float(parts[0])
+        qa["pot_depth_cm"] = float(parts[1]) if len(parts) > 1 else None
+    except (ValueError, IndexError):
+        await update.message.reply_text("Enter as `width depth` in cm (e.g. `20 18`):", parse_mode="Markdown")
+        return QA_POT_CUSTOM
     return await _ask_facing(update.message, context)
 
 
@@ -319,17 +409,34 @@ async def quickadd_watering_custom(update: Update, context: ContextTypes.DEFAULT
 
 # ── Save ──────────────────────────────────────────────────────────────────────
 
+async def _generate_and_save_report(plant_id: int, plant_name: str, plant_type: str | None,
+                                     pot_width_cm, pot_depth_cm, image_data: bytes | None):
+    """Background task: Perenual lookup + full AI analysis, saved to DB silently."""
+    try:
+        species_id = await perenual.search_species(plant_name)
+        p_data = await perenual.get_species_details(species_id) if species_id else {}
+        report = await _ai.generate_plant_report(
+            plant_name, plant_type, pot_width_cm, pot_depth_cm, image_data, p_data,
+        )
+        source = "perenual+ai" if p_data else "ai"
+        await db.save_plant_report(plant_id, source=source, **report)
+        logger.info("Report saved for plant_id=%s", plant_id)
+    except Exception as e:
+        logger.error("Background report failed for plant_id=%s: %s", plant_id, e)
+
+
 async def _save_plant(message, context) -> int:
     qa = context.user_data.get("qa", {})
     ai = qa.get("ai", {})
 
     location = qa.get("location")
-    pot_depth = ai.get("pot_depth_cm")
-    pot_width = ai.get("pot_width_cm")
+    pot_width = qa.get("pot_width_cm")
+    pot_depth = qa.get("pot_depth_cm")
+    plant_type = qa.get("plant_type")
 
     plant_id = await db.add_plant(
         name=qa.get("name", "Unknown plant"),
-        plant_type=ai.get("plant_type"),
+        plant_type=plant_type,
         pot_depth_cm=pot_depth,
         pot_width_cm=pot_width,
         location=location,
@@ -352,6 +459,12 @@ async def _save_plant(message, context) -> int:
     if image_data and file_id:
         await db.update_plant_image(plant_id, image_data, file_id)
 
+    # Fire background report (Call 2) — does not block or notify user
+    asyncio.create_task(_generate_and_save_report(
+        plant_id, qa.get("name", "Unknown plant"), plant_type,
+        pot_width, pot_depth, image_data,
+    ))
+
     name = qa.get("name", "Plant")
     h = qa.get("height_cm")
     height_str = f"{h} cm" if h else "?"
@@ -360,7 +473,7 @@ async def _save_plant(message, context) -> int:
 
     summary = (
         f"✅ *{name}* added!\n\n"
-        f"Type: {ai.get('plant_type') or '?'}\n"
+        f"Type: {plant_type or '?'}\n"
         f"Location: {location or '?'}\n"
         f"Soil: {qa.get('soil_type') or '?'}\n"
         f"Facing: {qa.get('facing') or '?'}\n"
@@ -391,17 +504,21 @@ def build_quickadd_handler() -> ConversationHandler:
     return ConversationHandler(
         entry_points=[CommandHandler("quickadd", quickadd_start)],
         states={
-            QA_PHOTO:           [MessageHandler(filters.PHOTO, quickadd_photo)],
-            QA_NAME:            [CallbackQueryHandler(quickadd_name_pick,      pattern=r"^qa_name:")],
-            QA_NAME_CUSTOM:     [MessageHandler(_txt, quickadd_name_custom)],
-            QA_LOCATION:        [CallbackQueryHandler(quickadd_location,       pattern=r"^qa_loc:")],
-            QA_SOIL:            [CallbackQueryHandler(quickadd_soil,           pattern=r"^qa_soil:")],
-            QA_SOIL_CUSTOM:     [MessageHandler(_txt, quickadd_soil_custom)],
-            QA_FACING:          [CallbackQueryHandler(quickadd_facing,         pattern=r"^qa_facing:")],
-            QA_HEIGHT:          [CallbackQueryHandler(quickadd_height,         pattern=r"^qa_height:")],
-            QA_HEIGHT_CUSTOM:   [MessageHandler(_txt, quickadd_height_custom)],
-            QA_WATERING:        [CallbackQueryHandler(quickadd_watering,       pattern=r"^qa_water:")],
-            QA_WATERING_CUSTOM: [MessageHandler(_txt, quickadd_watering_custom)],
+            QA_PHOTO:                [MessageHandler(filters.PHOTO, quickadd_photo)],
+            QA_NAME:                 [CallbackQueryHandler(quickadd_name_pick,       pattern=r"^qa_name:")],
+            QA_NAME_CUSTOM:          [MessageHandler(_txt, quickadd_name_custom)],
+            QA_PLANT_TYPE:           [CallbackQueryHandler(quickadd_plant_type,      pattern=r"^qa_type:")],
+            QA_PLANT_TYPE_CUSTOM:    [MessageHandler(_txt, quickadd_plant_type_custom)],
+            QA_LOCATION:             [CallbackQueryHandler(quickadd_location,        pattern=r"^qa_loc:")],
+            QA_SOIL:                 [CallbackQueryHandler(quickadd_soil,            pattern=r"^qa_soil:")],
+            QA_SOIL_CUSTOM:          [MessageHandler(_txt, quickadd_soil_custom)],
+            QA_POT:                  [CallbackQueryHandler(quickadd_pot,             pattern=r"^qa_pot:")],
+            QA_POT_CUSTOM:           [MessageHandler(_txt, quickadd_pot_custom)],
+            QA_FACING:               [CallbackQueryHandler(quickadd_facing,          pattern=r"^qa_facing:")],
+            QA_HEIGHT:               [CallbackQueryHandler(quickadd_height,          pattern=r"^qa_height:")],
+            QA_HEIGHT_CUSTOM:        [MessageHandler(_txt, quickadd_height_custom)],
+            QA_WATERING:             [CallbackQueryHandler(quickadd_watering,        pattern=r"^qa_water:")],
+            QA_WATERING_CUSTOM:      [MessageHandler(_txt, quickadd_watering_custom)],
         },
         fallbacks=[CommandHandler("cancel", quickadd_cancel)],
         per_message=False,

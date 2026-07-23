@@ -483,6 +483,140 @@ async def care_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
+# ── Report command ────────────────────────────────────────────────────────────
+
+_REPORT_SECTIONS = {
+    "health":      "🏥 Health",
+    "fertilizer":  "🌱 Fertilizer",
+    "repotting":   "🪴 Repotting",
+    "pruning":     "✂️ Pruning",
+    "insecticide": "🐛 Insecticide",
+}
+
+
+def _report_menu_kb(plant_id: int) -> InlineKeyboardMarkup:
+    items = list(_REPORT_SECTIONS.items())
+    rows = [
+        [(label, f"report_sec:{plant_id}:{key}") for key, label in items[i:i+2]]
+        for i in range(0, len(items), 2)
+    ]
+    rows.append([("🔄 Refresh", f"report_sec:{plant_id}:refresh")])
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(label, callback_data=data) for label, data in row]
+        for row in rows
+    ])
+
+
+async def _do_generate_report(plant: dict) -> None:
+    """Run Perenual + AI analysis and save to DB. Works for any plant."""
+    from quickadd import _generate_and_save_report
+    await _generate_and_save_report(
+        plant["id"], plant["name"], plant["plant_type"],
+        plant["pot_width_cm"], plant["pot_depth_cm"], plant["image_data"],
+    )
+
+
+async def _show_report_menu(chat_id: int, plant: dict, context, lang: str, edit_msg=None):
+    report = await db.get_plant_report(plant["id"])
+    if not report:
+        notice = t("report_analyzing", lang, name=plant["name"])
+        if edit_msg:
+            await edit_msg.edit_text(notice, parse_mode="Markdown")
+        else:
+            await context.bot.send_message(chat_id=chat_id, text=notice, parse_mode="Markdown")
+        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+        await _do_generate_report(plant)
+        report = await db.get_plant_report(plant["id"])
+
+    kb = _report_menu_kb(plant["id"])
+    text = t("report_menu", lang, name=plant["name"])
+    if edit_msg:
+        await edit_msg.edit_text(text, parse_mode="Markdown", reply_markup=kb)
+    else:
+        await context.bot.send_message(chat_id=chat_id, text=text,
+                                        parse_mode="Markdown", reply_markup=kb)
+
+
+async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = _lang(update)
+    uid = update.effective_chat.id
+    if not context.args:
+        plants = await db.get_all_plants(user_id=uid)
+        if not plants:
+            await update.message.reply_text(t("no_plants", lang))
+            return
+        keyboard, row = [], []
+        for p in plants:
+            row.append(InlineKeyboardButton(p["name"], callback_data=f"report:{p['id']}"))
+            if len(row) == 2:
+                keyboard.append(row)
+                row = []
+        if row:
+            keyboard.append(row)
+        await update.message.reply_text(t("report_pick", lang),
+                                        reply_markup=InlineKeyboardMarkup(keyboard))
+        return
+
+    plant = await db.get_plant_by_name(" ".join(context.args), user_id=uid)
+    if not plant:
+        await update.message.reply_text(t("plant_not_found", lang))
+        return
+    await _show_report_menu(uid, dict(plant), context, lang)
+
+
+async def report_plant_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    lang = _lang(update)
+    plant_id = int(query.data.split(":")[1])
+    plant = await db.get_plant_by_id(plant_id)
+    if not plant:
+        await query.edit_message_text(t("plant_not_found", lang))
+        return
+    await _show_report_menu(update.effective_chat.id, dict(plant), context, lang,
+                            edit_msg=query.message)
+
+
+async def report_section_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    lang = _lang(update)
+    _, plant_id_str, section = query.data.split(":", 2)
+    plant_id = int(plant_id_str)
+
+    plant = await db.get_plant_by_id(plant_id)
+    if not plant:
+        await query.edit_message_text(t("plant_not_found", lang))
+        return
+
+    if section == "refresh":
+        await query.edit_message_text(t("report_refresh", lang, name=plant["name"]),
+                                      parse_mode="Markdown")
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+        await _do_generate_report(dict(plant))
+        await _show_report_menu(update.effective_chat.id, dict(plant), context, lang,
+                                edit_msg=query.message)
+        return
+
+    if section == "menu":
+        await _show_report_menu(update.effective_chat.id, dict(plant), context, lang,
+                                edit_msg=query.message)
+        return
+
+    report = await db.get_plant_report(plant_id)
+    content = (dict(report).get(section) or t("report_no_data", lang)) if report else t("report_no_data", lang)
+    section_label = _REPORT_SECTIONS.get(section, section.title())
+
+    back_kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("← Back", callback_data=f"report_sec:{plant_id}:menu")
+    ]])
+    await query.edit_message_text(
+        f"📋 *{plant['name']} — {section_label}*\n\n{content}",
+        parse_mode="Markdown",
+        reply_markup=back_kb,
+    )
+
+
 # ── Reply handlers ───────────────────────────────────────────────────────────
 
 async def handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):

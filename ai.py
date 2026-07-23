@@ -175,6 +175,74 @@ async def suggest_care(
         }
 
 
+async def generate_plant_report(
+    plant_name: str,
+    plant_type: str | None,
+    pot_width_cm: float | None,
+    pot_depth_cm: float | None,
+    image_data: bytes | None,
+    perenual_data: dict,
+) -> dict:
+    """Full health + care analysis. Call 2 after user confirms species/pot/height."""
+    client = anthropic.AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+    p_lines = []
+    if perenual_data.get("scientific_name"):
+        p_lines.append(f"Scientific name: {', '.join(perenual_data['scientific_name'])}")
+    if perenual_data.get("care_level"):
+        p_lines.append(f"Care level: {perenual_data['care_level']}")
+    if perenual_data.get("growth_rate"):
+        p_lines.append(f"Growth rate: {perenual_data['growth_rate']}")
+    if perenual_data.get("pruning_month"):
+        p_lines.append(f"Typical pruning months: {', '.join(perenual_data['pruning_month'])}")
+    if perenual_data.get("dimension"):
+        p_lines.append(f"Mature size: {perenual_data['dimension']}")
+    perenual_str = "\n".join(p_lines) if p_lines else "No database entry found."
+
+    pot_str = (
+        f"{pot_width_cm} cm wide, {pot_depth_cm} cm deep"
+        if (pot_width_cm or pot_depth_cm)
+        else "unknown"
+    )
+    prompt = (
+        f'Plant: "{plant_name}" ({plant_type or "unknown type"})\n'
+        f"Current pot: {pot_str}\n\n"
+        f"Database info:\n{perenual_str}\n\n"
+        "Analyze this plant and return ONLY a valid JSON object, no other text:\n"
+        "{\n"
+        '  "health": "<assess: overwatering, underwatering, sun scorch, mold, overheating, pot size — one paragraph>",\n'
+        '  "fertilizer": "<type and schedule, including seasonal rest periods>",\n'
+        '  "repotting": "<when to repot, recommended pot size and soil mix>",\n'
+        '  "pruning": "<when and how to prune or trim>",\n'
+        '  "insecticide": "<preventive and reactive insecticide/pesticide recommendations>"\n'
+        "}"
+    )
+
+    content: list = []
+    if image_data:
+        b64 = base64.standard_b64encode(image_data).decode()
+        content.append({
+            "type": "image",
+            "source": {"type": "base64", "media_type": "image/jpeg", "data": b64},
+        })
+    content.append({"type": "text", "text": prompt})
+
+    _empty = {"health": "", "fertilizer": "", "repotting": "", "pruning": "", "insecticide": ""}
+    try:
+        resp = await client.messages.create(
+            model="claude-opus-4-7",
+            max_tokens=900,
+            messages=[{"role": "user", "content": content}],
+        )
+        text = resp.content[0].text.strip()
+        m = re.search(r"\{.*\}", text, re.DOTALL)
+        data = json.loads(m.group()) if m else {}
+        return {k: str(data.get(k, "")) for k in _empty}
+    except Exception as e:
+        logger.error("generate_plant_report failed: %s", e)
+        return _empty
+
+
 async def analyze_plant_health(plant: dict, image_data: bytes | None) -> str:
     client = anthropic.AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
