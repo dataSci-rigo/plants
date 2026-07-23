@@ -8,6 +8,8 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 import db
+import ai as _ai
+import perenual
 from ai import analyze_plant_health
 from i18n import t, lang_for, LOCATION_ALIASES, SKIP_WORDS, NONE_WORDS, UNSURE
 
@@ -431,6 +433,53 @@ async def issues_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                        cat=iss["category"],
                        desc=iss["description"],
                        date=iss["observed_at"][:10]))
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+async def care_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = _lang(update)
+    uid = update.effective_chat.id
+    if not context.args:
+        await update.message.reply_text(t("care_usage", lang), parse_mode="Markdown")
+        return
+
+    plant = await db.get_plant_by_name(" ".join(context.args), user_id=uid)
+    if not plant:
+        await update.message.reply_text(t("plant_not_found", lang))
+        return
+
+    await context.bot.send_chat_action(chat_id=uid, action="typing")
+
+    species_id = await perenual.search_species(plant["name"])
+    p_data = await perenual.get_species_details(species_id) if species_id else {}
+    care = await _ai.suggest_care(
+        plant["name"], plant["plant_type"],
+        plant["pot_width_cm"], plant["pot_depth_cm"],
+        p_data,
+    )
+
+    lines = [f"🌿 *{plant['name']} — Care guide*\n"]
+
+    if care["fertilizer_type"]:
+        lines.append(f"🌱 *Fertilizer:* {care['fertilizer_type']}")
+    if care["fertilizer_frequency"]:
+        lines.append(f"   {care['fertilizer_frequency']}")
+
+    if care["trimming_notes"]:
+        lines.append(f"\n✂️ *Trimming:* {care['trimming_notes']}")
+
+    if care["pot_upgrade"]:
+        rec = f" → {care['recommended_pot_cm']} cm wide" if care["recommended_pot_cm"] else ""
+        lines.append(f"\n🪴 *Pot:* upgrade recommended{rec}")
+    else:
+        lines.append("\n🪴 *Pot:* current size looks fine")
+
+    if care["notes"]:
+        lines.append(f"\n💡 {care['notes']}")
+
+    source = "Perenual + AI" if p_data else "AI estimate"
+    lines.append(f"\n_Source: {source}_")
+
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 

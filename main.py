@@ -17,7 +17,7 @@ from handlers import (
     AMOUNT, FACING, FERTILIZER_AMOUNT, FERTILIZER_FREQUENCY, FERTILIZER_TYPE,
     FREQUENCY, HEIGHT, LOCATION, NAME, PHOTO, PLANT_TYPE, POT_DEPTH, POT_WIDTH,
     SOIL_ALKALINITY, SOIL_TYPE, SUNLIGHT_ACTUAL, SUNLIGHT_NEEDED,
-    disease_command, health_callback, health_command, help_command, height_command,
+    care_command, disease_command, health_callback, health_command, help_command, height_command,
     issues_command, list_plants, onboard_amount,
     onboard_cancel, onboard_facing, onboard_fertilizer_amount,
     onboard_fertilizer_frequency, onboard_fertilizer_type, onboard_frequency,
@@ -98,6 +98,7 @@ def main():
     app.add_handler(CommandHandler("disease",     disease_command))
     app.add_handler(CommandHandler("treat",       treat_command))
     app.add_handler(CommandHandler("issues",      issues_command))
+    app.add_handler(CommandHandler("care",        care_command))
     app.add_handler(CommandHandler("startserver", startserver_command))
     app.add_handler(CommandHandler("stopserver",  stopserver_command))
     app.add_handler(CallbackQueryHandler(health_callback, pattern=r"^health:\d+$"))
