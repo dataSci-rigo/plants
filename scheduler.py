@@ -82,13 +82,21 @@ async def send_daily_recommendations(context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
             )
 
-            # 3. Per-plant reply-trackable messages
+            # 3. Per-plant messages with Yes/No buttons
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
             for plant in plants:
                 recommended_ml = int(plant["watering_amount_ml"] * multiplier)
+                kb = InlineKeyboardMarkup([[
+                    InlineKeyboardButton(f"✅ Yes ({recommended_ml} ml)",
+                                         callback_data=f"water_log:{plant['id']}:{recommended_ml}"),
+                    InlineKeyboardButton("❌ Skip",
+                                         callback_data=f"water_skip:{plant['id']}"),
+                ]])
                 msg = await context.bot.send_message(
                     chat_id=chat_id,
                     text=t("daily_plant_rec", lang, name=plant["name"], ml=recommended_ml),
                     parse_mode="Markdown",
+                    reply_markup=kb,
                 )
                 await db.save_plant_message(plant["id"], chat_id, msg.message_id)
 

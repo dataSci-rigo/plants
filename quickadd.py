@@ -427,54 +427,19 @@ async def _generate_and_save_report(plant_id: int, plant_name: str, plant_type: 
 
 async def _save_plant(message, context) -> int:
     qa = context.user_data.get("qa", {})
-    ai = qa.get("ai", {})
-
-    location = qa.get("location")
-    pot_width = qa.get("pot_width_cm")
-    pot_depth = qa.get("pot_depth_cm")
-    plant_type = qa.get("plant_type")
-
-    plant_id = await db.add_plant(
-        name=qa.get("name", "Unknown plant"),
-        plant_type=plant_type,
-        pot_depth_cm=pot_depth,
-        pot_width_cm=pot_width,
-        location=location,
-        soil_alkalinity=None,
-        soil_type=qa.get("soil_type"),
-        fertilizer_type=None,
-        fertilizer_amount=None,
-        fertilizer_frequency_days=None,
-        facing=qa.get("facing"),
-        height_cm=qa.get("height_cm"),
-        sunlight_hours_actual=None,
-        sunlight_hours_needed=ai.get("sunlight_hours_needed"),
-        watering_frequency_days=qa.get("watering_frequency_days", 7),
-        watering_amount_ml=qa.get("watering_amount_ml", 200),
-        user_id=qa.get("_uid"),
-    )
-
-    image_data = qa.get("image_data")
-    file_id = qa.get("file_id")
-    if image_data and file_id:
-        await db.update_plant_image(plant_id, image_data, file_id)
-
-    # Fire background report (Call 2) — does not block or notify user
-    asyncio.create_task(_generate_and_save_report(
-        plant_id, qa.get("name", "Unknown plant"), plant_type,
-        pot_width, pot_depth, image_data,
-    ))
+    await _save_plant_data(qa)
 
     name = qa.get("name", "Plant")
+    ai_data = qa.get("ai", {})
     h = qa.get("height_cm")
     height_str = f"{h} cm" if h else "?"
-    notes = ai.get("notes", "")
+    notes = ai_data.get("notes", "")
     context.user_data.clear()
 
     summary = (
         f"✅ *{name}* added!\n\n"
-        f"Type: {plant_type or '?'}\n"
-        f"Location: {location or '?'}\n"
+        f"Type: {qa.get('plant_type') or '?'}\n"
+        f"Location: {qa.get('location') or '?'}\n"
         f"Soil: {qa.get('soil_type') or '?'}\n"
         f"Facing: {qa.get('facing') or '?'}\n"
         f"Height: {height_str}\n"
@@ -489,12 +454,70 @@ async def _save_plant(message, context) -> int:
     return ConversationHandler.END
 
 
-# ── Cancel ────────────────────────────────────────────────────────────────────
+# ── Cancel / Timeout ──────────────────────────────────────────────────────────
 
 async def quickadd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     await update.message.reply_text("Quick add cancelled.")
     return ConversationHandler.END
+
+
+async def quickadd_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    qa = context.user_data.get("qa", {})
+    chat_id = update.effective_chat.id
+    name = qa.get("name")
+    if name:
+        # Save whatever was collected before timeout
+        await _save_plant_data(qa)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"⏱ Quick add timed out — *{name}* was saved with the details collected so far.",
+            parse_mode="Markdown",
+        )
+    else:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="⏱ Quick add timed out.",
+        )
+    context.user_data.clear()
+    return ConversationHandler.END
+
+
+async def _save_plant_data(qa: dict) -> int | None:
+    """Save a plant from qa dict with whatever fields are populated. Returns plant_id or None."""
+    try:
+        ai = qa.get("ai", {})
+        plant_id = await db.add_plant(
+            name=qa.get("name", "Unknown plant"),
+            plant_type=qa.get("plant_type"),
+            pot_depth_cm=qa.get("pot_depth_cm"),
+            pot_width_cm=qa.get("pot_width_cm"),
+            location=qa.get("location"),
+            soil_alkalinity=None,
+            soil_type=qa.get("soil_type"),
+            fertilizer_type=None,
+            fertilizer_amount=None,
+            fertilizer_frequency_days=None,
+            facing=qa.get("facing"),
+            height_cm=qa.get("height_cm"),
+            sunlight_hours_actual=None,
+            sunlight_hours_needed=ai.get("sunlight_hours_needed"),
+            watering_frequency_days=qa.get("watering_frequency_days", 7),
+            watering_amount_ml=qa.get("watering_amount_ml", 200),
+            user_id=qa.get("_uid"),
+        )
+        image_data = qa.get("image_data")
+        file_id = qa.get("file_id")
+        if image_data and file_id:
+            await db.update_plant_image(plant_id, image_data, file_id)
+        asyncio.create_task(_generate_and_save_report(
+            plant_id, qa.get("name"), qa.get("plant_type"),
+            qa.get("pot_width_cm"), qa.get("pot_depth_cm"), image_data,
+        ))
+        return plant_id
+    except Exception as e:
+        logger.error("_save_plant_data failed: %s", e)
+        return None
 
 
 # ── ConversationHandler factory ───────────────────────────────────────────────
@@ -519,7 +542,9 @@ def build_quickadd_handler() -> ConversationHandler:
             QA_HEIGHT_CUSTOM:        [MessageHandler(_txt, quickadd_height_custom)],
             QA_WATERING:             [CallbackQueryHandler(quickadd_watering,        pattern=r"^qa_water:")],
             QA_WATERING_CUSTOM:      [MessageHandler(_txt, quickadd_watering_custom)],
+            ConversationHandler.TIMEOUT: [MessageHandler(filters.ALL, quickadd_timeout)],
         },
         fallbacks=[CommandHandler("cancel", quickadd_cancel)],
+        conversation_timeout=7200,  # 2 hours
         per_message=False,
     )

@@ -100,7 +100,7 @@ _EN = {
     "daily_yesterday":     "watered yesterday",
     "daily_days_ago":      "last watered {days} days ago",
     "daily_instructions":  "\nReply with the amount you gave (e.g. `312`) or `skip` to each message below.",
-    "daily_plant_rec":     "🌿 *{name}* — {ml} ml\n\nReply with amount or `skip`.",
+    "daily_plant_rec":     "🌿 *{name}* — {ml} ml\n\n_Reply with a different amount to log custom ml._",
     "height_reminder":  "📏 *Time for a height check-in!*\n\nReply with `/height <plant> <cm>` for each:",
     # pest / disease / treatment
     "pest_usage":       "Usage: `/pest <plant name> <description>`\ne.g. `/pest Jasmine aphids on leaves`",
@@ -220,7 +220,7 @@ _ES = {
     "daily_yesterday":     "regada ayer",
     "daily_days_ago":      "regada hace {days} días",
     "daily_instructions":  "\nResponde con la cantidad que le diste (ej. `312`) u `omitir` a cada mensaje abajo.",
-    "daily_plant_rec":     "🌿 *{name}* — {ml} ml\n\nResponde con la cantidad u `omitir`.",
+    "daily_plant_rec":     "🌿 *{name}* — {ml} ml\n\n_Responde con una cantidad diferente para registrar ml personalizados._",
     "height_reminder": "📏 *¡Hora de medir la altura de tus plantas!*\n\nResponde con `/height <planta> <cm>` para cada una:",
     # pest / disease / treatment
     "pest_usage":       "Uso: `/pest <planta> <descripción>`\nej. `/pest Jazmín pulgones en las hojas`",

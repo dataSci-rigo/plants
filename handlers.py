@@ -617,6 +617,38 @@ async def report_section_callback(update: Update, context: ContextTypes.DEFAULT_
     )
 
 
+# ── Watering button callbacks ────────────────────────────────────────────────
+
+async def water_log_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    lang = _lang(update)
+    _, plant_id_str, ml_str = query.data.split(":")
+    plant = await db.get_plant_by_id(int(plant_id_str))
+    if not plant:
+        await query.edit_message_text("Plant not found.")
+        return
+    await db.log_watering(plant["id"], int(ml_str))
+    await query.edit_message_text(
+        t("water_logged", lang, ml=int(ml_str), name=plant["name"]),
+        parse_mode="Markdown",
+    )
+
+
+async def water_skip_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    lang = _lang(update)
+    plant = await db.get_plant_by_id(int(query.data.split(":")[1]))
+    if not plant:
+        await query.edit_message_text("Plant not found.")
+        return
+    await query.edit_message_text(
+        t("water_skipped", lang, name=plant["name"]),
+        parse_mode="Markdown",
+    )
+
+
 # ── Reply handlers ───────────────────────────────────────────────────────────
 
 async def handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):

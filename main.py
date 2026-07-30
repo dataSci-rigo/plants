@@ -20,6 +20,7 @@ from handlers import (
     care_command, disease_command, health_callback, health_command, help_command, height_command,
     issues_command, list_plants, onboard_amount,
     report_command, report_plant_callback, report_section_callback,
+    water_log_callback, water_skip_callback,
     onboard_cancel, onboard_facing, onboard_fertilizer_amount,
     onboard_fertilizer_frequency, onboard_fertilizer_type, onboard_frequency,
     onboard_height, onboard_location, onboard_name, onboard_photo,
@@ -105,7 +106,9 @@ def main():
     app.add_handler(CallbackQueryHandler(report_section_callback, pattern=r"^report_sec:"))
     app.add_handler(CommandHandler("startserver", startserver_command))
     app.add_handler(CommandHandler("stopserver",  stopserver_command))
-    app.add_handler(CallbackQueryHandler(health_callback, pattern=r"^health:\d+$"))
+    app.add_handler(CallbackQueryHandler(health_callback,        pattern=r"^health:\d+$"))
+    app.add_handler(CallbackQueryHandler(water_log_callback,     pattern=r"^water_log:"))
+    app.add_handler(CallbackQueryHandler(water_skip_callback,    pattern=r"^water_skip:"))
 
     # Photo replies must be registered before text replies
     app.add_handler(MessageHandler(filters.REPLY & filters.PHOTO, handle_photo_reply))
@@ -114,7 +117,7 @@ def main():
     # Daily recommendations at 08:00 UTC
     app.job_queue.run_daily(
         send_daily_recommendations,
-        time=time(hour=8, minute=0, tzinfo=timezone.utc),
+        time=time(hour=15, minute=0, tzinfo=timezone.utc),
         name="daily_plant_recommendations",
     )
 
