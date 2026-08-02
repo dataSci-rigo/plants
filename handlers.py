@@ -60,7 +60,9 @@ async def _find_plant_in_args(args: list[str], uid: int):
     for i in range(len(args), 0, -1):
         name = " ".join(args[:i])
         matches = await db.search_plants(name, user_id=uid)
-        if matches:
+        if len(matches) == 1:
+            return matches[0], list(args[i:]), []
+        if len(matches) > 1:
             return None, list(args[i:]), list(matches)
 
     return None, [], []
