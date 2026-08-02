@@ -26,7 +26,7 @@ from handlers import (
     onboard_height, onboard_location, onboard_name, onboard_photo,
     onboard_pot_depth, onboard_pot_width, onboard_soil_alkalinity,
     onboard_soil_type, onboard_start, onboard_sunlight_actual, onboard_sunlight_needed,
-    onboard_type, pest_command, photo_command,
+    onboard_type, pest_command, photo_command, potgroup_command, repot_command,
     start, status_command, treat_command, water_command,
     handle_photo_reply, handle_reply,
     startserver_command, stopserver_command,
@@ -100,6 +100,8 @@ def main():
     app.add_handler(CommandHandler("disease",     disease_command))
     app.add_handler(CommandHandler("treat",       treat_command))
     app.add_handler(CommandHandler("issues",      issues_command))
+    app.add_handler(CommandHandler("repot",       repot_command))
+    app.add_handler(CommandHandler("potgroup",    potgroup_command))
     app.add_handler(CommandHandler("care",        care_command))
     app.add_handler(CommandHandler("report",      report_command))
     app.add_handler(CallbackQueryHandler(report_plant_callback,   pattern=r"^report:\d+$"))

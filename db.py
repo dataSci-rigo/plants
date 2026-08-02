@@ -107,6 +107,20 @@ async def init_db():
                 FOREIGN KEY (plant_id) REFERENCES plants(id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS repottings (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                plant_id     INTEGER NOT NULL,
+                old_width_cm REAL,
+                old_depth_cm REAL,
+                old_soil     TEXT,
+                new_width_cm REAL,
+                new_depth_cm REAL,
+                new_soil     TEXT,
+                notes        TEXT,
+                repotted_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (plant_id) REFERENCES plants(id) ON DELETE CASCADE
+            );
+
             CREATE TABLE IF NOT EXISTS plant_reports (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
                 plant_id     INTEGER NOT NULL UNIQUE,
@@ -137,6 +151,7 @@ async def init_db():
             "ALTER TABLE plants ADD COLUMN sunlight_hours_actual REAL",
             "ALTER TABLE plants ADD COLUMN sunlight_hours_needed REAL",
             "ALTER TABLE plants ADD COLUMN user_id INTEGER",
+            "ALTER TABLE plants ADD COLUMN pot_group TEXT",
         ):
             try:
                 await db.execute(column_sql)
@@ -403,6 +418,57 @@ async def get_plant_report(plant_id: int):
             "SELECT * FROM plant_reports WHERE plant_id = ?", (plant_id,)
         )
         return await cursor.fetchone()
+
+
+async def log_repotting(plant_id: int, old_width, old_depth, old_soil,
+                         new_width, new_depth, new_soil, notes: str = ""):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO repottings
+               (plant_id, old_width_cm, old_depth_cm, old_soil,
+                new_width_cm, new_depth_cm, new_soil, notes)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (plant_id, old_width, old_depth, old_soil,
+             new_width, new_depth, new_soil, notes),
+        )
+        if new_width is not None:
+            await db.execute("UPDATE plants SET pot_width_cm = ? WHERE id = ?",
+                              (new_width, plant_id))
+        if new_depth is not None:
+            await db.execute("UPDATE plants SET pot_depth_cm = ? WHERE id = ?",
+                              (new_depth, plant_id))
+        if new_soil is not None:
+            await db.execute("UPDATE plants SET soil_type = ? WHERE id = ?",
+                              (new_soil, plant_id))
+        await db.commit()
+
+
+async def get_repottings(plant_id: int, limit: int = 5):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM repottings WHERE plant_id = ? ORDER BY repotted_at DESC LIMIT ?",
+            (plant_id, limit),
+        )
+        return await cursor.fetchall()
+
+
+async def set_pot_group(plant_id: int, group_name: str | None):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE plants SET pot_group = ? WHERE id = ?",
+                          (group_name, plant_id))
+        await db.commit()
+
+
+async def get_pot_companions(plant_id: int, pot_group: str, user_id: int):
+    """Return all plants in the same pot_group except plant_id itself."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM plants WHERE pot_group = ? AND user_id = ? AND id != ?",
+            (pot_group, user_id, plant_id),
+        )
+        return await cursor.fetchall()
 
 
 async def cache_weather(temp_c: float, humidity: int, description: str):

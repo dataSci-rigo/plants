@@ -234,18 +234,19 @@ async def photo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(t("plant_not_found", lang))
         return
 
-    if not plant["telegram_file_id"] and not plant["image_data"]:
-        await update.message.reply_text(t("photo_none", lang, name=plant["name"]),
-                                        parse_mode="Markdown")
-        return
-
-    caption = f"📷 *{plant['name']}*"
+    caption = f"📷 *{plant['name']}*\n\n_Reply with a new photo to update it._"
     if plant["telegram_file_id"]:
-        await update.message.reply_photo(photo=plant["telegram_file_id"],
-                                         caption=caption, parse_mode="Markdown")
+        msg = await update.message.reply_photo(photo=plant["telegram_file_id"],
+                                               caption=caption, parse_mode="Markdown")
+    elif plant["image_data"]:
+        msg = await update.message.reply_photo(photo=plant["image_data"],
+                                               caption=caption, parse_mode="Markdown")
     else:
-        await update.message.reply_photo(photo=plant["image_data"],
-                                         caption=caption, parse_mode="Markdown")
+        msg = await update.message.reply_text(
+            t("photo_none", lang, name=plant["name"]) + "\n\n_Reply to this message with a photo to add one._",
+            parse_mode="Markdown",
+        )
+    await db.save_plant_message(plant["id"], uid, msg.message_id)
 
 
 async def health_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -434,6 +435,118 @@ async def issues_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                        desc=iss["description"],
                        date=iss["observed_at"][:10]))
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+async def repot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /repot <plant> [new_width] [new_depth] [soil]
+    e.g. /repot Jasmine 25 20 potting mix
+    Width and depth are optional — omit to keep current values.
+    """
+    lang = _lang(update)
+    uid = update.effective_chat.id
+    if not context.args:
+        await update.message.reply_text(
+            t("repot_usage", lang), parse_mode="Markdown"
+        )
+        return
+
+    # Parse: find plant by trying progressively fewer tokens for the name
+    args = context.args
+    plant = None
+    split_at = len(args)
+    for i in range(len(args), 0, -1):
+        candidate = await db.get_plant_by_name(" ".join(args[:i]), user_id=uid)
+        if candidate:
+            plant = candidate
+            split_at = i
+            break
+    if not plant:
+        await update.message.reply_text(t("plant_not_found", lang))
+        return
+
+    rest = args[split_at:]
+    new_width = new_depth = new_soil = None
+    try:
+        if rest:
+            new_width = float(rest[0])
+        if len(rest) > 1:
+            new_depth = float(rest[1])
+        if len(rest) > 2:
+            new_soil = " ".join(rest[2:])
+    except ValueError:
+        # Non-numeric token — treat everything after name as soil note
+        new_soil = " ".join(rest)
+
+    await db.log_repotting(
+        plant["id"],
+        old_width=plant["pot_width_cm"], old_depth=plant["pot_depth_cm"],
+        old_soil=plant["soil_type"],
+        new_width=new_width, new_depth=new_depth, new_soil=new_soil,
+    )
+
+    parts = [t("repot_logged", lang, name=plant["name"])]
+    if new_width or new_depth:
+        parts.append(f"🪴 New pot: {new_width or '?'} × {new_depth or '?'} cm")
+    if new_soil:
+        parts.append(f"🪨 Soil: {new_soil}")
+    await update.message.reply_text("\n".join(parts), parse_mode="Markdown")
+
+
+async def potgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /potgroup <group_name> <plant1>, <plant2>, ...
+    e.g. /potgroup "window box" Basil, Jasmine
+    Use /potgroup clear <plant> to remove a plant from its group.
+    """
+    lang = _lang(update)
+    uid = update.effective_chat.id
+    if not context.args:
+        await update.message.reply_text(
+            t("potgroup_usage", lang), parse_mode="Markdown"
+        )
+        return
+
+    raw = " ".join(context.args)
+
+    # "clear <plant>" removes from group
+    if context.args[0].lower() == "clear":
+        plant_name = " ".join(context.args[1:])
+        plant = await db.get_plant_by_name(plant_name, user_id=uid)
+        if not plant:
+            await update.message.reply_text(t("plant_not_found", lang))
+            return
+        await db.set_pot_group(plant["id"], None)
+        await update.message.reply_text(
+            t("potgroup_cleared", lang, name=plant["name"]), parse_mode="Markdown"
+        )
+        return
+
+    # Split "GroupName Plant1, Plant2" — group name is first token(s) before a comma-separated list
+    # Try: first token = group name, rest = comma-separated plants
+    parts = raw.split(None, 1)
+    if len(parts) < 2:
+        await update.message.reply_text(t("potgroup_usage", lang), parse_mode="Markdown")
+        return
+    group_name = parts[0]
+    plant_names = [p.strip() for p in parts[1].split(",") if p.strip()]
+
+    grouped = []
+    not_found = []
+    for pname in plant_names:
+        plant = await db.get_plant_by_name(pname, user_id=uid)
+        if plant:
+            await db.set_pot_group(plant["id"], group_name)
+            grouped.append(plant["name"])
+        else:
+            not_found.append(pname)
+
+    msg_parts = []
+    if grouped:
+        msg_parts.append(t("potgroup_set", lang, group=group_name, names=", ".join(grouped)))
+    if not_found:
+        msg_parts.append(f"Not found: {', '.join(not_found)}")
+    await update.message.reply_text("\n".join(msg_parts), parse_mode="Markdown")
 
 
 async def care_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -628,11 +741,23 @@ async def water_log_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not plant:
         await query.edit_message_text("Plant not found.")
         return
-    await db.log_watering(plant["id"], int(ml_str))
-    await query.edit_message_text(
-        t("water_logged", lang, ml=int(ml_str), name=plant["name"]),
-        parse_mode="Markdown",
-    )
+    amount_ml = int(ml_str)
+    await db.log_watering(plant["id"], amount_ml)
+
+    # Also log companions sharing the same pot
+    companions = []
+    if plant["pot_group"] and plant["user_id"]:
+        pot_companions = await db.get_pot_companions(
+            plant["id"], plant["pot_group"], plant["user_id"]
+        )
+        for c in pot_companions:
+            await db.log_watering(c["id"], amount_ml)
+            companions.append(c["name"])
+
+    text = t("water_logged", lang, ml=amount_ml, name=plant["name"])
+    if companions:
+        text += f"\n_Also logged for pot companions: {', '.join(companions)}_"
+    await query.edit_message_text(text, parse_mode="Markdown")
 
 
 async def water_skip_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
