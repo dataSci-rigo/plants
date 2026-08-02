@@ -227,6 +227,26 @@ async def get_plant_by_id(plant_id: int):
         return await cursor.fetchone()
 
 
+async def search_plants(query: str, user_id: int = None, limit: int = 6):
+    """Partial name search using LIKE, ordered by name length (closest match first)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        pattern = f"%{query}%"
+        if user_id is not None:
+            cursor = await db.execute(
+                "SELECT * FROM plants WHERE LOWER(name) LIKE LOWER(?) AND user_id = ? "
+                "ORDER BY LENGTH(name) LIMIT ?",
+                (pattern, user_id, limit),
+            )
+        else:
+            cursor = await db.execute(
+                "SELECT * FROM plants WHERE LOWER(name) LIKE LOWER(?) "
+                "ORDER BY LENGTH(name) LIMIT ?",
+                (pattern, limit),
+            )
+        return await cursor.fetchall()
+
+
 async def get_plant_by_name(name: str, user_id=None):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row

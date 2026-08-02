@@ -38,6 +38,241 @@ _FACING_NORMALIZE = {
 _flask_process: subprocess.Popen | None = None
 
 
+# ── Plant name resolution helpers ────────────────────────────────────────────
+
+async def _find_plant_in_args(args: list[str], uid: int):
+    """
+    Given a token list, find a plant by exact then partial match.
+    Tries progressively shorter prefixes so extra args can trail the name.
+    Returns (plant, extra_args, candidates):
+      - plant set, candidates empty  → unambiguous match
+      - plant None, candidates set   → multiple partial matches (show picker)
+      - plant None, candidates empty → nothing found
+    """
+    # 1. Exact match: try all tokens as name, then shorter prefixes
+    for i in range(len(args), 0, -1):
+        name = " ".join(args[:i])
+        plant = await db.get_plant_by_name(name, user_id=uid)
+        if plant:
+            return plant, list(args[i:]), []
+
+    # 2. Partial (LIKE) match: same progressive approach
+    for i in range(len(args), 0, -1):
+        name = " ".join(args[:i])
+        matches = await db.search_plants(name, user_id=uid)
+        if matches:
+            return None, list(args[i:]), list(matches)
+
+    return None, [], []
+
+
+async def _show_plant_picker(message, context, candidates, command: str,
+                              extra_args: list, lang: str):
+    """Send an inline keyboard of matching plants and stash extra_args for the callback."""
+    context.user_data["_pick_args"] = extra_args
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(p["name"], callback_data=f"plant_pick:{command}:{p['id']}")]
+        for p in candidates
+    ])
+    await message.reply_text(t("plant_picker", lang), reply_markup=kb)
+
+
+async def plant_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Dispatch after the user selects a plant from the partial-match picker."""
+    query = update.callback_query
+    await query.answer()
+    lang = _lang(update)
+    uid = update.effective_chat.id
+
+    _, command, plant_id_str = query.data.split(":", 2)
+    plant = await db.get_plant_by_id(int(plant_id_str))
+    if not plant:
+        await query.edit_message_text(t("plant_not_found", lang))
+        return
+
+    extra = context.user_data.pop("_pick_args", [])
+    plant = dict(plant)
+    await query.edit_message_text(f"🌿 *{plant['name']}*", parse_mode="Markdown")
+    bot = context.bot
+
+    if command == "water":
+        amount_ml = int(extra[0]) if extra and extra[0].isdigit() else plant["watering_amount_ml"]
+        await db.log_watering(plant["id"], amount_ml)
+        await bot.send_message(uid, t("water_logged", lang, ml=amount_ml, name=plant["name"]), parse_mode="Markdown")
+
+    elif command == "status":
+        await _send_status(bot, uid, plant, lang)
+
+    elif command == "photo":
+        await _send_photo(bot, uid, plant, lang)
+
+    elif command == "health":
+        await _run_health_check(uid, plant, context, lang)
+
+    elif command == "height":
+        if extra and extra[-1].replace(".", "", 1).isdigit():
+            h = float(extra[-1])
+            await db.log_height(plant["id"], h)
+            await bot.send_message(uid, t("height_logged", lang, cm=h, name=plant["name"]), parse_mode="Markdown")
+        else:
+            await bot.send_message(uid, t("height_usage", lang), parse_mode="Markdown")
+
+    elif command == "pest":
+        desc = " ".join(extra)
+        if desc:
+            await db.log_issue(plant["id"], "bug", desc)
+            await bot.send_message(uid, t("pest_logged", lang, name=plant["name"], desc=desc), parse_mode="Markdown")
+        else:
+            await bot.send_message(uid, t("pest_usage", lang), parse_mode="Markdown")
+
+    elif command == "disease":
+        desc = " ".join(extra)
+        if desc:
+            await db.log_issue(plant["id"], "fungal", desc)
+            await bot.send_message(uid, t("disease_logged", lang, name=plant["name"], desc=desc), parse_mode="Markdown")
+        else:
+            await bot.send_message(uid, t("disease_usage", lang), parse_mode="Markdown")
+
+    elif command == "treat":
+        ingredients = {k: False for k in _TREAT_INGREDIENTS}
+        notes_parts = []
+        for token in extra:
+            if token.lower() in _TREAT_INGREDIENTS:
+                ingredients[token.lower()] = True
+            else:
+                notes_parts.append(token)
+        if any(ingredients.values()):
+            notes = " ".join(notes_parts) or None
+            await db.log_treatment(plant["id"], notes=notes, **ingredients)
+            used = [k for k, v in ingredients.items() if v]
+            label = " + ".join(used) + (f" ({notes})" if notes else "")
+            await bot.send_message(uid, t("treat_logged", lang, name=plant["name"], ingredients=label), parse_mode="Markdown")
+        else:
+            await bot.send_message(uid, t("treat_nothing", lang), parse_mode="Markdown")
+
+    elif command == "issues":
+        await _send_issues(bot, uid, plant, lang)
+
+    elif command == "repot":
+        new_width = new_depth = new_soil = None
+        try:
+            if extra: new_width = float(extra[0])
+            if len(extra) > 1: new_depth = float(extra[1])
+            if len(extra) > 2: new_soil = " ".join(extra[2:])
+        except ValueError:
+            new_soil = " ".join(extra)
+        await db.log_repotting(plant["id"],
+                                old_width=plant["pot_width_cm"], old_depth=plant["pot_depth_cm"],
+                                old_soil=plant["soil_type"],
+                                new_width=new_width, new_depth=new_depth, new_soil=new_soil)
+        parts = [t("repot_logged", lang, name=plant["name"])]
+        if new_width or new_depth:
+            parts.append(f"🪴 New pot: {new_width or '?'} × {new_depth or '?'} cm")
+        if new_soil:
+            parts.append(f"🪨 Soil: {new_soil}")
+        await bot.send_message(uid, "\n".join(parts), parse_mode="Markdown")
+
+    elif command == "care":
+        await _send_care(bot, uid, plant, lang)
+
+    elif command == "report":
+        await _show_report_menu(uid, plant, context, lang)
+
+
+# ── Shared display helpers (used by commands + plant_pick_callback) ───────────
+
+async def _send_status(bot, uid: int, plant: dict, lang: str):
+    history = await db.get_watering_history(plant["id"], limit=10)
+    if plant.get("fertilizer_type"):
+        fert_line = t("status_fert", lang,
+                      type=plant["fertilizer_type"],
+                      amount=plant["fertilizer_amount"] or "?",
+                      freq=plant["fertilizer_frequency_days"] or "?")
+    else:
+        fert_line = t("status_no_fert", lang)
+
+    companion_line = ""
+    if plant.get("pot_group") and plant.get("user_id"):
+        companions = await db.get_pot_companions(plant["id"], plant["pot_group"], plant["user_id"])
+        if companions:
+            companion_line = f"\nPot companions: {', '.join(c['name'] for c in companions)}"
+
+    lines = [
+        f"🌿 *{plant['name']}*",
+        f"Type: {plant.get('plant_type') or '?'}",
+        f"Location: {plant.get('location') or '?'}",
+        f"Pot: {plant.get('pot_depth_cm') or '?'} cm deep × {plant.get('pot_width_cm') or '?'} cm wide",
+        f"Soil volume: {plant.get('soil_volume_l') or '?'} L",
+        f"Soil: {plant.get('soil_alkalinity') or '?'}, {plant.get('soil_type') or '?'}",
+        f"Fertilizer: {fert_line}",
+        f"Facing: {plant.get('facing') or '?'}",
+        f"Height: {plant.get('height_cm') or '?'} cm",
+        f"Sun: {plant.get('sunlight_hours_actual') or '?'}h / {plant.get('sunlight_hours_needed') or '?'}h needed",
+        f"Watering: every {plant.get('watering_frequency_days', '?')} days, {plant.get('watering_amount_ml', '?')} ml{companion_line}\n",
+        "💧 *Recent waterings:*",
+    ]
+    if history:
+        for h in history:
+            lines.append(f"  • {h['watered_at'][:16]} — {h['amount_ml']} ml")
+    else:
+        lines.append(f"  {t('status_no_hist', lang)}")
+    await bot.send_message(uid, "\n".join(lines), parse_mode="Markdown")
+
+
+async def _send_photo(bot, uid: int, plant: dict, lang: str):
+    caption = f"📷 *{plant['name']}*\n\n_Reply with a new photo to update it._"
+    if plant.get("telegram_file_id"):
+        msg = await bot.send_photo(uid, photo=plant["telegram_file_id"],
+                                   caption=caption, parse_mode="Markdown")
+    elif plant.get("image_data"):
+        msg = await bot.send_photo(uid, photo=plant["image_data"],
+                                   caption=caption, parse_mode="Markdown")
+    else:
+        msg = await bot.send_message(
+            uid,
+            t("photo_none", lang, name=plant["name"]) + "\n\n_Reply to this message with a photo to add one._",
+            parse_mode="Markdown",
+        )
+    await db.save_plant_message(plant["id"], uid, msg.message_id)
+
+
+async def _send_issues(bot, uid: int, plant: dict, lang: str):
+    open_issues = await db.get_issues(plant["id"], open_only=True)
+    if not open_issues:
+        await bot.send_message(uid, t("issues_none", lang, name=plant["name"]), parse_mode="Markdown")
+        return
+    lines = [t("issues_header", lang, name=plant["name"])]
+    for iss in open_issues:
+        lines.append(t("issue_row", lang, cat=iss["category"],
+                       desc=iss["description"], date=iss["observed_at"][:10]))
+    await bot.send_message(uid, "\n".join(lines), parse_mode="Markdown")
+
+
+async def _send_care(bot, uid: int, plant: dict, lang: str):
+    await bot.send_chat_action(chat_id=uid, action="typing")
+    species_id = await perenual.search_species(plant["name"])
+    p_data = await perenual.get_species_details(species_id) if species_id else {}
+    care = await _ai.suggest_care(plant["name"], plant.get("plant_type"),
+                                  plant.get("pot_width_cm"), plant.get("pot_depth_cm"), p_data)
+    lines = [f"🌿 *{plant['name']} — Care guide*\n"]
+    if care["fertilizer_type"]:
+        lines.append(f"🌱 *Fertilizer:* {care['fertilizer_type']}")
+    if care["fertilizer_frequency"]:
+        lines.append(f"   {care['fertilizer_frequency']}")
+    if care["trimming_notes"]:
+        lines.append(f"\n✂️ *Trimming:* {care['trimming_notes']}")
+    if care["pot_upgrade"]:
+        rec = f" → {care['recommended_pot_cm']} cm wide" if care["recommended_pot_cm"] else ""
+        lines.append(f"\n🪴 *Pot:* upgrade recommended{rec}")
+    else:
+        lines.append("\n🪴 *Pot:* current size looks fine")
+    if care["notes"]:
+        lines.append(f"\n💡 {care['notes']}")
+    source = "Perenual + AI" if p_data else "AI estimate"
+    lines.append(f"\n_Source: {source}_")
+    await bot.send_message(uid, "\n".join(lines), parse_mode="Markdown")
+
+
 def _lang(update: Update) -> str:
     return lang_for(update.effective_chat.id)
 
@@ -156,22 +391,22 @@ async def water_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(t("water_usage", lang), parse_mode="Markdown")
         return
 
-    args = context.args
+    args = list(context.args)
     amount_ml = None
     if args[-1].isdigit():
-        amount_ml = int(args[-1])
-        plant_name = " ".join(args[:-1])
-    else:
-        plant_name = " ".join(args)
+        amount_ml = int(args.pop())
 
-    plant = await db.get_plant_by_name(plant_name, user_id=uid)
+    plant, extra, candidates = await _find_plant_in_args(args, uid)
+    if candidates:
+        context.user_data["_pick_args"] = [str(amount_ml)] if amount_ml else []
+        await _show_plant_picker(update.message, context, candidates, "water", [], lang)
+        return
     if not plant:
         await update.message.reply_text(t("plant_not_found", lang))
         return
 
     if amount_ml is None:
         amount_ml = plant["watering_amount_ml"]
-
     await db.log_watering(plant["id"], amount_ml)
     await update.message.reply_text(t("water_logged", lang, ml=amount_ml, name=plant["name"]),
                                     parse_mode="Markdown")
@@ -184,42 +419,14 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(t("status_usage", lang), parse_mode="Markdown")
         return
 
-    plant = await db.get_plant_by_name(" ".join(context.args), user_id=uid)
+    plant, _, candidates = await _find_plant_in_args(list(context.args), uid)
+    if candidates:
+        await _show_plant_picker(update.message, context, candidates, "status", [], lang)
+        return
     if not plant:
         await update.message.reply_text(t("plant_not_found", lang))
         return
-
-    history = await db.get_watering_history(plant["id"], limit=10)
-
-    if plant["fertilizer_type"]:
-        fert_line = t("status_fert", lang,
-                      type=plant["fertilizer_type"],
-                      amount=plant["fertilizer_amount"] or "?",
-                      freq=plant["fertilizer_frequency_days"] or "?")
-    else:
-        fert_line = t("status_no_fert", lang)
-
-    lines = [
-        f"🌿 *{plant['name']}*",
-        f"Type: {plant['plant_type'] or '?'}",
-        f"Location: {plant['location'] or '?'}",
-        f"Pot: {plant['pot_depth_cm'] or '?'} cm deep × {plant['pot_width_cm'] or '?'} cm wide",
-        f"Soil volume: {plant['soil_volume_l'] or '?'} L",
-        f"Soil: {plant['soil_alkalinity'] or '?'}, {plant['soil_type'] or '?'}",
-        f"Fertilizer: {fert_line}",
-        f"Facing: {plant['facing'] or '?'}",
-        f"Height: {plant['height_cm'] or '?'} cm",
-        f"Sun: {plant['sunlight_hours_actual'] or '?'}h / {plant['sunlight_hours_needed'] or '?'}h needed",
-        f"Watering: every {plant['watering_frequency_days']} days, {plant['watering_amount_ml']} ml\n",
-        "💧 *Recent waterings:*",
-    ]
-    if history:
-        for h in history:
-            lines.append(f"  • {h['watered_at'][:16]} — {h['amount_ml']} ml")
-    else:
-        lines.append(f"  {t('status_no_hist', lang)}")
-
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await _send_status(context.bot, uid, dict(plant), lang)
 
 
 async def photo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -229,7 +436,10 @@ async def photo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(t("photo_usage", lang), parse_mode="Markdown")
         return
 
-    plant = await db.get_plant_by_name(" ".join(context.args), user_id=uid)
+    plant, _, candidates = await _find_plant_in_args(list(context.args), uid)
+    if candidates:
+        await _show_plant_picker(update.message, context, candidates, "photo", [], lang)
+        return
     if not plant:
         await update.message.reply_text(t("plant_not_found", lang))
         return
@@ -253,7 +463,10 @@ async def health_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = _lang(update)
     uid = update.effective_chat.id
     if context.args:
-        plant = await db.get_plant_by_name(" ".join(context.args), user_id=uid)
+        plant, _, candidates = await _find_plant_in_args(list(context.args), uid)
+        if candidates:
+            await _show_plant_picker(update.message, context, candidates, "health", [], lang)
+            return
         if not plant:
             await update.message.reply_text(t("plant_not_found", lang))
             return
@@ -311,7 +524,12 @@ async def height_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     height_cm = float(context.args[-1])
-    plant = await db.get_plant_by_name(" ".join(context.args[:-1]), user_id=uid)
+    name_args = list(context.args[:-1])
+    plant, _, candidates = await _find_plant_in_args(name_args, uid)
+    if candidates:
+        await _show_plant_picker(update.message, context, candidates, "height",
+                                  [str(height_cm)], lang)
+        return
     if not plant:
         await update.message.reply_text(t("plant_not_found", lang))
         return
@@ -331,18 +549,15 @@ async def pest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(t("pest_usage", lang), parse_mode="Markdown")
         return
 
-    # First word is plant name, rest is description
-    plant = await db.get_plant_by_name(context.args[0], user_id=uid)
-    if plant:
-        desc = " ".join(context.args[1:])
-    else:
-        # Try multi-word plant name: walk back from end until we find a match
-        plant = await db.get_plant_by_name(" ".join(context.args[:-1]), user_id=uid)
-        desc = context.args[-1] if plant else None
-        if not plant:
-            await update.message.reply_text(t("plant_not_found", lang))
-            return
+    plant, extra, candidates = await _find_plant_in_args(list(context.args), uid)
+    if candidates:
+        await _show_plant_picker(update.message, context, candidates, "pest", extra, lang)
+        return
+    if not plant or not extra:
+        await update.message.reply_text(t("plant_not_found", lang))
+        return
 
+    desc = " ".join(extra)
     await db.log_issue(plant["id"], "bug", desc)
     await update.message.reply_text(t("pest_logged", lang, name=plant["name"], desc=desc),
                                     parse_mode="Markdown")
@@ -355,16 +570,15 @@ async def disease_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(t("disease_usage", lang), parse_mode="Markdown")
         return
 
-    plant = await db.get_plant_by_name(context.args[0], user_id=uid)
-    if plant:
-        desc = " ".join(context.args[1:])
-    else:
-        plant = await db.get_plant_by_name(" ".join(context.args[:-1]), user_id=uid)
-        desc = context.args[-1] if plant else None
-        if not plant:
-            await update.message.reply_text(t("plant_not_found", lang))
-            return
+    plant, extra, candidates = await _find_plant_in_args(list(context.args), uid)
+    if candidates:
+        await _show_plant_picker(update.message, context, candidates, "disease", extra, lang)
+        return
+    if not plant or not extra:
+        await update.message.reply_text(t("plant_not_found", lang))
+        return
 
+    desc = " ".join(extra)
     await db.log_issue(plant["id"], "fungal", desc)
     await update.message.reply_text(t("disease_logged", lang, name=plant["name"], desc=desc),
                                     parse_mode="Markdown")
@@ -377,19 +591,17 @@ async def treat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(t("treat_usage", lang), parse_mode="Markdown")
         return
 
-    # Resolve plant name (first token(s) that match)
-    plant = await db.get_plant_by_name(context.args[0], user_id=uid)
-    remaining = list(context.args[1:])
-    if not plant and len(context.args) >= 2:
-        plant = await db.get_plant_by_name(" ".join(context.args[:2]), user_id=uid)
-        remaining = list(context.args[2:])
+    plant, extra, candidates = await _find_plant_in_args(list(context.args), uid)
+    if candidates:
+        await _show_plant_picker(update.message, context, candidates, "treat", extra, lang)
+        return
     if not plant:
         await update.message.reply_text(t("plant_not_found", lang))
         return
 
     ingredients = {k: False for k in _TREAT_INGREDIENTS}
     notes_parts = []
-    for token in remaining:
+    for token in extra:
         if token.lower() in _TREAT_INGREDIENTS:
             ingredients[token.lower()] = True
         else:
@@ -417,24 +629,14 @@ async def issues_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(t("issues_usage", lang), parse_mode="Markdown")
         return
 
-    plant = await db.get_plant_by_name(" ".join(context.args), user_id=uid)
+    plant, _, candidates = await _find_plant_in_args(list(context.args), uid)
+    if candidates:
+        await _show_plant_picker(update.message, context, candidates, "issues", [], lang)
+        return
     if not plant:
         await update.message.reply_text(t("plant_not_found", lang))
         return
-
-    open_issues = await db.get_issues(plant["id"], open_only=True)
-    if not open_issues:
-        await update.message.reply_text(t("issues_none", lang, name=plant["name"]),
-                                        parse_mode="Markdown")
-        return
-
-    lines = [t("issues_header", lang, name=plant["name"])]
-    for iss in open_issues:
-        lines.append(t("issue_row", lang,
-                       cat=iss["category"],
-                       desc=iss["description"],
-                       date=iss["observed_at"][:10]))
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await _send_issues(context.bot, uid, dict(plant), lang)
 
 
 async def repot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -451,21 +653,13 @@ async def repot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Parse: find plant by trying progressively fewer tokens for the name
-    args = context.args
-    plant = None
-    split_at = len(args)
-    for i in range(len(args), 0, -1):
-        candidate = await db.get_plant_by_name(" ".join(args[:i]), user_id=uid)
-        if candidate:
-            plant = candidate
-            split_at = i
-            break
+    plant, rest, candidates = await _find_plant_in_args(list(context.args), uid)
+    if candidates:
+        await _show_plant_picker(update.message, context, candidates, "repot", rest, lang)
+        return
     if not plant:
         await update.message.reply_text(t("plant_not_found", lang))
         return
-
-    rest = args[split_at:]
     new_width = new_depth = new_soil = None
     try:
         if rest:
@@ -556,7 +750,10 @@ async def care_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(t("care_usage", lang), parse_mode="Markdown")
         return
 
-    plant = await db.get_plant_by_name(" ".join(context.args), user_id=uid)
+    plant, _, candidates = await _find_plant_in_args(list(context.args), uid)
+    if candidates:
+        await _show_plant_picker(update.message, context, candidates, "care", [], lang)
+        return
     if not plant:
         await update.message.reply_text(t("plant_not_found", lang))
         return
@@ -670,7 +867,10 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                         reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
-    plant = await db.get_plant_by_name(" ".join(context.args), user_id=uid)
+    plant, _, candidates = await _find_plant_in_args(list(context.args), uid)
+    if candidates:
+        await _show_plant_picker(update.message, context, candidates, "report", [], lang)
+        return
     if not plant:
         await update.message.reply_text(t("plant_not_found", lang))
         return

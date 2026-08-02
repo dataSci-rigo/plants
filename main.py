@@ -18,7 +18,7 @@ from handlers import (
     FREQUENCY, HEIGHT, LOCATION, NAME, PHOTO, PLANT_TYPE, POT_DEPTH, POT_WIDTH,
     SOIL_ALKALINITY, SOIL_TYPE, SUNLIGHT_ACTUAL, SUNLIGHT_NEEDED,
     care_command, disease_command, health_callback, health_command, help_command, height_command,
-    issues_command, list_plants, onboard_amount,
+    issues_command, list_plants, onboard_amount, plant_pick_callback,
     report_command, report_plant_callback, report_section_callback,
     water_log_callback, water_skip_callback,
     onboard_cancel, onboard_facing, onboard_fertilizer_amount,
@@ -111,6 +111,7 @@ def main():
     app.add_handler(CallbackQueryHandler(health_callback,        pattern=r"^health:\d+$"))
     app.add_handler(CallbackQueryHandler(water_log_callback,     pattern=r"^water_log:"))
     app.add_handler(CallbackQueryHandler(water_skip_callback,    pattern=r"^water_skip:"))
+    app.add_handler(CallbackQueryHandler(plant_pick_callback,    pattern=r"^plant_pick:"))
 
     # Photo replies must be registered before text replies
     app.add_handler(MessageHandler(filters.REPLY & filters.PHOTO, handle_photo_reply))
